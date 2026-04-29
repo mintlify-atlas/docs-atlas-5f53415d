@@ -1,0 +1,282 @@
+---
+title: "SuperAnimal foundation models for pose estimation"
+description: "Detailed reference for SuperAnimal-Quadruped and SuperAnimal-TopViewMouse: keypoints, model variants, video adaptation, and fine-tuning on your own data."
+---
+
+SuperAnimal models are pretrained foundation models that combine pose-estimation data from many labs and datasets into a single checkpoint. They provide strong zero-shot performance on novel videos without any labeling — and can be adapted or fine-tuned when out-of-the-box results are not sufficient.
+
+## SuperAnimal-Quadruped
+
+SuperAnimal-Quadruped covers a broad range of quadruped species filmed from a side-view (camera roughly perpendicular to the animal). The training data spans horses, dogs, sheep, rodents, elephants, and more. Most training frames include the animal's face, so the model works best when the front and sides of the animal are visible.
+
+**Full datasheet:** [zenodo.org/records/10619173](https://zenodo.org/records/10619173)
+
+### Keypoints (39 total)
+
+`nose`, `upper_jaw`, `lower_jaw`, `mouth_end_right`, `mouth_end_left`, `right_eye`, `right_earbase`, `right_earend`, `right_antler_base`, `right_antler_end`, `left_eye`, `left_earbase`, `left_earend`, `left_antler_base`, `left_antler_end`, `neck_base`, `neck_end`, `throat_base`, `throat_end`, `back_base`, `back_end`, `back_middle`, `tail_base`, `tail_end`, `front_left_thai`, `front_left_knee`, `front_left_paw`, `front_right_thai`, `front_right_knee`, `front_right_paw`, `back_left_paw`, `back_left_thai`, `back_right_thai`, `back_left_knee`, `back_right_knee`, `back_right_paw`, `belly_bottom`, `body_middle_right`, `body_middle_left`
+
+### Model variants
+
+<Tabs>
+  <Tab title="hrnetw32 (PyTorch) — recommended">
+    `superanimal_quadruped_hrnetw32` is a **top-down** model: an object detector first crops each animal, then the HRNet-W32 pose estimator predicts keypoints within that crop. This approach is more robust than bottom-up models, especially when multiple animals are present.
+
+    - **Engine:** PyTorch
+    - **Detector:** `fasterrcnn_resnet50_fpn_v2` (ResNet-50 Faster-RCNN)
+    - **Requires `detector_name`** to be specified when calling `video_inference_superanimal`
+
+    ```python
+    import deeplabcut
+
+    deeplabcut.video_inference_superanimal(
+        videos=["side_view_horse.mp4"],
+        superanimal_name="superanimal_quadruped",
+        model_name="hrnet_w32",
+        detector_name="fasterrcnn_resnet50_fpn_v2",
+    )
+    ```
+  </Tab>
+  <Tab title="dlcrnet (TensorFlow)">
+    `superanimal_quadruped_dlcrnet` is a **bottom-up** model: it predicts all keypoints in the full frame and then groups them into individuals. This can be faster on some hardware, but is more error-prone when animals overlap or are partially occluded.
+
+    - **Engine:** TensorFlow
+    - **No separate detector required**
+    - **`scale_list` recommended** for videos where the animal occupies more than ~1000 px
+
+    ```python
+    import deeplabcut
+
+    # Guide the model with a scale list when animals are large in frame
+    scale_list = range(200, 600, 50)
+
+    deeplabcut.video_inference_superanimal(
+        videos=["side_view_horse.mp4"],
+        superanimal_name="superanimal_quadruped",
+        model_name="dlcrnet",
+        scale_list=scale_list,
+    )
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## SuperAnimal-TopViewMouse
+
+SuperAnimal-TopViewMouse is designed for lab mice filmed from directly above — the standard overhead configuration used in open-field, elevated plus maze, and similar freely-moving behavioral assays.
+
+**Full datasheet:** [zenodo.org/records/10618947](https://zenodo.org/records/10618947)
+
+### Keypoints (27 total)
+
+`nose`, `left_ear`, `right_ear`, `left_ear_tip`, `right_ear_tip`, `left_eye`, `right_eye`, `neck`, `mid_back`, `mouse_center`, `mid_backend`, `mid_backend2`, `mid_backend3`, `tail_base`, `tail1`, `tail2`, `tail3`, `tail4`, `tail5`, `left_shoulder`, `left_midside`, `left_hip`, `right_shoulder`, `right_midside`, `right_hip`, `tail_end`, `head_midpoint`
+
+### Model variants
+
+<Tabs>
+  <Tab title="hrnetw32 (PyTorch) — recommended">
+    `superanimal_topviewmouse_hrnetw32` is a **top-down** model with a Faster-RCNN detector, same architecture as the quadruped variant.
+
+    ```python
+    import deeplabcut
+
+    deeplabcut.video_inference_superanimal(
+        videos=["openfield_mouse.mp4"],
+        superanimal_name="superanimal_topviewmouse",
+        model_name="hrnet_w32",
+        detector_name="fasterrcnn_resnet50_fpn_v2",
+        max_individuals=3,
+    )
+    ```
+  </Tab>
+  <Tab title="dlcrnet (TensorFlow)">
+    `superanimal_topviewmouse_dlcrnet` is the bottom-up TensorFlow variant for top-view mouse footage.
+
+    ```python
+    import deeplabcut
+
+    deeplabcut.video_inference_superanimal(
+        videos=["openfield_mouse.mp4"],
+        superanimal_name="superanimal_topviewmouse",
+        model_name="dlcrnet",
+    )
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Model download and caching
+
+All model snapshots are automatically downloaded from HuggingFace to `modelzoo/checkpoints` the first time you use a given model. Subsequent calls reuse the cached weights — no internet connection required after the first run.
+
+The engine used is determined by the `model_name` argument:
+
+| `model_name` | Engine |
+|---|---|
+| `hrnet_w32` | PyTorch |
+| `dlcrnet` | TensorFlow |
+| `rtmpose_x` | PyTorch |
+| `fmpose3d_animals` | PyTorch |
+
+---
+
+## Video adaptation (self-supervised)
+
+Video adaptation fine-tunes the model on pseudo-labels generated from your target video without requiring any manual annotation. It is especially useful when:
+
+- Your video's pixel statistics (brightness, contrast) differ from the training data
+- Predictions are temporally jittery on your specific footage
+
+Enable it by setting `video_adapt=True`. Adaptation runs on the first video in the list and the adapted weights generalize to other similar videos.
+
+```python
+import deeplabcut
+
+deeplabcut.video_inference_superanimal(
+    videos=["lab_mouse_session1.mp4", "lab_mouse_session2.mp4"],
+    superanimal_name="superanimal_topviewmouse",
+    model_name="hrnet_w32",
+    detector_name="fasterrcnn_resnet50_fpn_v2",
+    video_adapt=True,
+    max_individuals=3,
+    pseudo_threshold=0.1,   # filter low-confidence pseudo-labels for pose
+    bbox_threshold=0.9,     # filter low-confidence pseudo-labels for detector
+    pose_epochs=4,          # adaptation epochs for pose model
+    detector_epochs=4,      # adaptation epochs for detector
+)
+```
+
+<Note>
+Adaptation only runs on the first video. The adapted checkpoint is saved under a `pseudo_<video_stem>/checkpoints/` folder next to the source video, so subsequent calls with the same `pose_epochs` / `detector_epochs` values reuse the existing checkpoint.
+</Note>
+
+### Tuning adaptation parameters
+
+| Parameter | Default | Guidance |
+|---|---|---|
+| `pseudo_threshold` | `0.1` | Raise to discard more low-confidence keypoint pseudo-labels |
+| `bbox_threshold` | `0.9` | Raise to discard more low-confidence bounding-box pseudo-labels |
+| `pose_epochs` | `4` | Increase if training logs show continued improvement; rarely needs to exceed 10 |
+| `detector_epochs` | `4` | Same guidance as `pose_epochs` |
+| `video_adapt_batch_size` | `8` | Reduce if you run out of GPU memory during adaptation |
+
+---
+
+## Handling spatial scale variation
+
+Bottom-up models are sensitive to how large the animal appears in the frame. If your frame resolution is much larger or smaller than the training images, predictions may be poor. Use `scale_list` to run inference at multiple scales and aggregate the results:
+
+```python
+import deeplabcut
+
+# Expect the animal to appear ~400 px tall; sweep a range around that estimate
+scale_list = range(200, 600, 50)
+
+deeplabcut.video_inference_superanimal(
+    videos=["large_frame_video.mp4"],
+    superanimal_name="superanimal_quadruped",
+    model_name="dlcrnet",
+    scale_list=scale_list,
+)
+```
+
+<Warning>
+For `superanimal_quadruped` with frames wider than 1500 px, pass a `scale_list` with values below 1000 to avoid the model failing to locate the animal.
+</Warning>
+
+---
+
+## Fine-tuning on your own data
+
+When zero-shot inference is not accurate enough, fine-tune a SuperAnimal model on your own labeled frames. You can do this in two ways.
+
+### Option 1: `create_pretrained_project` (quickest path)
+
+`create_pretrained_project` creates a DLC project pre-loaded with SuperAnimal weights and optionally runs inference on your videos immediately:
+
+```python
+import deeplabcut
+
+config_path, train_config_path = deeplabcut.create_pretrained_project(
+    project="my_mouse_study",
+    experimenter="alice",
+    videos=["/data/videos/session1.mp4"],
+    model="superanimal_topviewmouse",  # dataset name
+    net_name="hrnet_w32",
+    detector_name="fasterrcnn_resnet50_fpn_v2",
+    analyzevideo=True,
+    createlabeledvideo=True,
+)
+```
+
+After the project is created, label additional frames with the DLC GUI or API, then call `deeplabcut.train_network(config_path)` to continue training from the SuperAnimal checkpoint.
+
+### Option 2: `build_weight_init` (fine-grained control)
+
+Use `build_weight_init` when you want precise control over the weight initialization, including whether to load the decoder layer and whether to use memory replay:
+
+```python
+import deeplabcut
+from deeplabcut.modelzoo import build_weight_init
+
+config_path = "openfield-Pranav-2018-10-30/config.yaml"
+superanimal_name = "superanimal_topviewmouse"
+
+weight_init = build_weight_init(
+    cfg=config_path,
+    super_animal=superanimal_name,
+    model_name="hrnet_w32",
+    detector_name="fasterrcnn_resnet50_fpn_v2",
+    with_decoder=False,  # True = fine-tune; False = transfer learning
+)
+
+deeplabcut.create_training_dataset(config_path, weight_init=weight_init)
+
+deeplabcut.train_network(
+    config_path,
+    epochs=10,
+    superanimal_name=superanimal_name,
+    superanimal_transfer_learning=True,
+)
+```
+
+<Note>
+`superanimal_transfer_learning=True` adds a new decoding layer, letting you use SuperAnimal weights regardless of how many keypoints your project defines. Set it to `False` only when your project uses exactly the same keypoint set as the SuperAnimal model (39 for quadruped, 27 for top-view mouse).
+</Note>
+
+### Keypoint counts for fine-tuning
+
+| Model | Keypoints |
+|---|---|
+| `superanimal_quadruped_*` | 39 |
+| `superanimal_topviewmouse_*` | 27 |
+
+When `superanimal_transfer_learning=False`, your project must define exactly this many keypoints in the same order as listed in the [project config YAML](#keypoints-39-total).
+
+---
+
+## Common failure modes and fixes
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Predictions jump between frames | Pixel statistics mismatch (brightness/contrast) | Enable `video_adapt=True` |
+| Animal not detected at all | Spatial resolution mismatch | Pass `scale_list` spanning expected animal size in pixels |
+| Poor predictions on lab mice with unusual fur color | Out-of-distribution appearance | Enable `video_adapt=True` |
+| `ValueError: You have to specify a detector_name` | Missing `detector_name` for PyTorch top-down model | Add `detector_name="fasterrcnn_resnet50_fpn_v2"` |
+
+---
+
+## Citation
+
+If you use SuperAnimal models in your research, please cite:
+
+```
+@article{Ye2024,
+  title   = {SuperAnimal pretrained pose estimation models for behavioral analysis},
+  author  = {Shaokai Ye and Anastasiia Filippova and Jessy Lauer and Steffen Schneider
+             and Maxime Vidal and Tian Qiu and Alexander Mathis and Mackenzie Weygandt Mathis},
+  journal = {Nature Communications},
+  year    = {2024},
+}
+```

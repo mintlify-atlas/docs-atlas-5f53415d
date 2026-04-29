@@ -1,0 +1,249 @@
+---
+title: "Using the DeepLabCut GUI application"
+description: "Launch the DeepLabCut Project Manager GUI, navigate workflow tabs, label frames in napari, train models, and analyze videos without writing code."
+---
+
+DeepLabCut ships a graphical Project Manager built on PySide6 and napari (available since v2.3). It exposes all core workflow steps as a sequence of tabs, making it a good entry point before moving to the Python API. Every action in the GUI calls the same underlying functions described in the [single-animal](/guides/single-animal) and [multi-animal](/guides/multi-animal) workflow guides.
+
+<Note>
+The GUI requires the `gui` extras. Install with:
+
+```bash
+pip install "deeplabcut[gui]"
+```
+
+For GPU support and the model zoo, use:
+
+```bash
+pip install "deeplabcut[gui,modelzoo]"
+```
+
+On macOS with Apple Silicon:
+
+```bash
+pip install "deeplabcut[apple_mchips,gui]"
+```
+</Note>
+
+<Steps>
+
+<Step title="Launch the GUI">
+
+Activate your conda environment, then run:
+
+```bash
+python -m deeplabcut
+```
+
+Or from Python:
+
+```python
+import deeplabcut
+deeplabcut.launch_dlc()
+```
+
+Keep the terminal visible alongside the GUI window — progress output, warnings, and errors are printed there as each step runs.
+
+<Tip>
+On Windows, open the terminal with **Run as administrator** before launching. The GUI checks for available updates on startup and will prompt you to upgrade when a new version is available.
+</Tip>
+
+</Step>
+
+<Step title="Choose appearance and project type">
+
+The top bar has an **Appearance** toggle to switch between dark and light mode.
+
+On the **Project Management** tab, choose one of three entry points:
+
+<CardGroup cols={3}>
+  <Card title="Create new project" icon="folder-plus">
+    Start a fresh project. Prompts for project name, experimenter name, video paths, and whether this is a single-animal or multi-animal experiment.
+  </Card>
+  <Card title="Load project" icon="folder-open">
+    Resume an existing project by selecting its `config.yaml` file. All tabs update to reflect the project's current state.
+  </Card>
+  <Card title="Model Zoo" icon="database">
+    Run inference with a pretrained SuperAnimal model on new videos without building a custom training dataset.
+  </Card>
+</CardGroup>
+
+</Step>
+
+<Step title="Project Management tab">
+
+After creating or loading a project, the **Project Management** tab shows a form for the core project settings:
+
+- **Project name** and **Experimenter name** — set at creation and cannot be changed afterward.
+- **Engine** — choose **PyTorch** (recommended, default in DLC 3+) or **TensorFlow**.
+- **Multi-animal** — check this box before clicking **Create** to produce a multi-animal project with the additional `individuals`, `multianimalbodyparts`, and `uniquebodyparts` fields in `config.yaml`.
+- **Videos** — click **Browse Videos** to add `.mp4`, `.avi`, `.mkv`, or `.mov` files. You can deselect videos from the list before creating.
+- **Working directory** — defaults to the desktop; change the path to place the project elsewhere.
+
+After filling in all fields, click **Create** to call `deeplabcut.create_new_project(...)` and build the directory tree.
+
+</Step>
+
+<Step title="Edit configuration">
+
+The **Edit config.yaml** section (within the Project Management tab or accessible as a dedicated panel, depending on the version) opens the project configuration file in an editable form. You must configure bodyparts before extracting frames.
+
+For **single-animal** projects, define `bodyparts`:
+
+```yaml
+bodyparts:
+  - snout
+  - leftear
+  - rightear
+  - tailbase
+```
+
+For **multi-animal** projects, define `individuals`, `multianimalbodyparts`, and optionally `uniquebodyparts`:
+
+```yaml
+individuals:
+  - mouse1
+  - mouse2
+multianimalbodyparts:
+  - snout
+  - leftear
+  - rightear
+  - tailbase
+uniquebodyparts: []
+identity: false
+```
+
+Click **Save** to write changes to `config.yaml`.
+
+</Step>
+
+<Step title="Extract frames tab">
+
+The **Extract Frames** tab calls `deeplabcut.extract_frames(...)` with the options you set:
+
+| Option | Description |
+|--------|-------------|
+| **Mode** | `Automatic` (algorithmic sampling) or `Manual` (interactive picker) |
+| **Algorithm** | `Uniform` (random temporal) or `Kmeans` (visual clustering) |
+| **Crop** | Enable to draw a region-of-interest rectangle in a pop-up; coordinates are saved to `config.yaml` |
+| **User feedback** | Prompt before extracting frames from each video (useful when adding new videos to an existing project) |
+
+Click **Extract Frames** to run. Extracted images are written to `labeled-data/<video_name>/`.
+
+</Step>
+
+<Step title="Label frames tab">
+
+Click **Label Frames** to open the napari labeling interface. This calls `deeplabcut.label_frames(config_path)` and launches napari with the `napari-deeplabcut` plugin.
+
+**Labeling workflow:**
+
+1. Drop a folder from `labeled-data/` onto the napari canvas, or use **File > Open Folder**.
+2. If starting fresh, also drop the project's `config.yaml` — this populates the keypoints dropdown and creates a Points layer.
+3. Select the **Points layer** in the layer list (lower-left panel).
+4. Click the **+** symbol in the layer controls to enter labeling mode.
+5. Click on the image to place each keypoint. The active keypoint cycles automatically; use the dropdown on the right panel to jump to a specific bodypart.
+6. Navigate frames with the slider below the image or the left/right arrow keys.
+7. Press `Ctrl+S` to save. Labels are stored as `CollectedData_<ScorerName>.h5`.
+
+**To label multiple folders**, save and close the current folder's layers (select all layers and click the trash icon), then drag in the next folder.
+
+**Shortcuts reference:**
+
+| Key | Action |
+|-----|--------|
+| `2` | Labeling mode |
+| `3` | Selection mode |
+| `4` | Pan and zoom |
+| `M` | Cycle annotation modes (sequential, quick, cycle) |
+| `E` | Toggle edge coloring — highlights low-confidence points in red during refinement |
+| `F` | Toggle between animal and bodypart color scheme |
+| `V` | Toggle layer visibility |
+| `Backspace` | Delete the selected point |
+| `Ctrl+S` | Save selected layer |
+
+<Warning>
+Always select the **Points layer** (not the image layer) before saving. Saving with the image layer selected will discard any unsaved annotation work from the current session.
+</Warning>
+
+</Step>
+
+<Step title="Check labels tab">
+
+After labeling, click **Check Labels** to run `deeplabcut.check_labels(config_path)`. This generates overlay images in `labeled-data/<video_name>/labeled/` for manual review. In multi-animal mode, toggle `Visualize individuals` to color by individual identity instead of bodypart type.
+
+</Step>
+
+<Step title="Create training dataset tab">
+
+The **Create Training Dataset** tab calls `deeplabcut.create_training_dataset(config_path)`. Options include:
+
+- **Network architecture** (`net_type`) — selects the backbone (e.g., `resnet_50`, `efficientnet_b0`).
+- **Number of shuffles** — creates multiple train/test splits for benchmarking.
+- **Use existing data split** — creates additional shuffles sharing the same split as an existing shuffle (calls `create_training_dataset_from_existing_split`), enabling fair architecture comparisons.
+- **Augmentation** — editable after dataset creation in the generated `pytorch_config.yaml`.
+
+<Note>
+If you plan to train on a remote GPU server, transfer the entire project folder to that machine and run the **Create Training Dataset** step there.
+</Note>
+
+</Step>
+
+<Step title="Train network tab">
+
+Click **Train Network** to call `deeplabcut.train_network(config_path)`. Configure:
+
+- **Shuffle** — index of the shuffle to train.
+- **Device** — GPU (`cuda:0`, `cuda:1`, …) or `cpu`.
+- **Epochs** (PyTorch) or **Max iterations** (TensorFlow).
+- **Display iterations** and **Save epochs/iterations** — how often to log loss and write checkpoints.
+
+Training progress (loss values) is printed in the terminal window. Snapshots are saved to `dlc-models-pytorch/iteration-X/shuffleX/train/`.
+
+</Step>
+
+<Step title="Evaluate network tab">
+
+Click **Evaluate Network** to run `deeplabcut.evaluate_network(config_path, Shuffles=[1], plotting=True)`. The GUI displays RMSE for train and test sets. Plotted overlay images are saved to `evaluation-results-pytorch/`.
+
+</Step>
+
+<Step title="Analyze videos tab">
+
+The **Analyze Videos** tab runs inference on new videos. Add video paths (files or a folder), then click **Analyze Videos**. This calls `deeplabcut.analyze_videos(...)` and writes `.h5` output files.
+
+For multi-animal projects, enable **Auto-track** to run assembly and stitching automatically in the same call. You can also enable **Dynamic cropping** for large-frame videos where the animal occupies a small region.
+
+After analysis, additional actions in this tab (or adjacent tabs) let you:
+- Filter predictions (`deeplabcut.filterpredictions`)
+- Plot trajectories (`deeplabcut.plot_trajectories`)
+- Create labeled videos (`deeplabcut.create_labeled_video`)
+- Extract outlier frames and refine labels
+
+</Step>
+
+<Step title="Refine labels and active learning">
+
+For refinement of an existing project:
+
+1. Go to **Analyze Videos** and analyze a video with the current model.
+2. Go to **Extract Outlier Frames** and select an outlier detection method (`jump`, `uncertain`, `fitting`, or `manual`).
+3. Click **Extract Outlier Frames** to call `deeplabcut.extract_outlier_frames(...)`.
+4. Click **Refine Labels** to open the napari GUI in refinement mode — the `machinelabels` layer shows model predictions with red edges on low-confidence points.
+5. Correct mislabeled points, then `Ctrl+S` to save (writes corrections to `CollectedData_<ScorerName>.h5`).
+6. Click **Merge Datasets** to call `deeplabcut.merge_datasets(config_path)`, which increments the iteration counter and merges refined frames into the training set.
+7. Return to **Create Training Dataset** and repeat from there.
+
+</Step>
+
+</Steps>
+
+## Standalone napari labeling
+
+The `napari-deeplabcut` plugin is also available as a standalone napari plugin (separately installable with `pip install napari-deeplabcut`). Launch napari directly:
+
+```bash
+napari
+```
+
+Then enable the plugin from **Plugins > napari-deeplabcut: Keypoint controls**. Drop a `labeled-data` folder and the project's `config.yaml` onto the canvas to begin labeling without the full Project Manager GUI.

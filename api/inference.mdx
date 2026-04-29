@@ -1,0 +1,634 @@
+---
+title: "Video analysis and inference API reference"
+description: "API reference for analyze_videos, analyze_images, video_inference_superanimal, and create_labeled_video — DeepLabCut's core inference functions."
+---
+
+DeepLabCut provides a unified inference API that works across both its PyTorch and TensorFlow backends. After training a model, you call `analyze_videos` (or one of the related functions below) to produce per-frame body-part predictions stored as HDF5 (`.h5`) files alongside your videos. Optional CSV export, dynamic cropping, and multi-animal tracking are all controlled through the same call.
+
+## analyze\_videos
+
+Runs pose estimation on one or more video files using a trained model. This is the primary entry point for all video-based inference. Results are written as a MultiIndex Pandas DataFrame in HDF5 format to the same directory as each video, using the DLC scorer name in the filename.
+
+```python
+import deeplabcut
+
+deeplabcut.analyze_videos(
+    config="/analysis/project/reaching-task/config.yaml",
+    videos=["/analysis/project/videos/reachingvideo1.avi"],
+    save_as_csv=True,
+)
+```
+
+**Multi-animal example**
+
+```python
+import deeplabcut
+
+deeplabcut.analyze_videos(
+    config="/analysis/project/maDLC-task/config.yaml",
+    videos=["/analysis/project/videos/session1.mp4"],
+    videotype=".mp4",
+    shuffle=1,
+    auto_track=True,
+    n_tracks=3,
+    identity_only=False,
+    save_as_csv=True,
+)
+```
+
+### Parameters
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="videos" type="string[]" required>
+  A list of full paths to video files, or a path to a directory. When a
+  directory is given, all videos whose extension matches `videotype` are
+  analyzed.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  File extension filter used when `videos` points to a directory. When left
+  empty, videos with common extensions (`avi`, `mp4`, `mov`, `mpeg`, `mkv`) are
+  selected.
+</ParamField>
+
+<ParamField path="shuffle" type="integer" default="1">
+  Index of the training-dataset shuffle whose snapshot is used for inference.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="integer" default="0">
+  Index into the `TrainingFraction` list in `config.yaml`, selecting which
+  training fraction's model to use.
+</ParamField>
+
+<ParamField path="gputouse" type="integer | null" default="null">
+  **TensorFlow engine only.** GPU index as reported by `nvidia-smi`. Pass
+  `None` to use the CPU. For the PyTorch engine, pass `device` via
+  `torch_kwargs` instead.
+</ParamField>
+
+<ParamField path="save_as_csv" type="boolean" default="false">
+  If `True`, also writes predictions to a `.csv` file alongside the `.h5`
+  output.
+</ParamField>
+
+<ParamField path="in_random_order" type="boolean" default="true">
+  Whether to analyze videos in a random order when a directory is given.
+</ParamField>
+
+<ParamField path="destfolder" type="string | null" default="null">
+  Directory where output files are written. Defaults to the directory
+  containing each video. Must be passed to all subsequent analysis calls if
+  overridden here.
+</ParamField>
+
+<ParamField path="batchsize" type="integer | null" default="null">
+  **TensorFlow engine only.** Overrides the batch size from `pose_cfg.yaml`.
+  For the PyTorch engine, pass `batch_size` via `torch_kwargs`.
+</ParamField>
+
+<ParamField path="cropping" type="integer[]" default="null">
+  Crop coordinates applied to every video before inference: `[x1, x2, y1,
+  y2]`. To use different crops per video, call `analyze_videos` once per video.
+</ParamField>
+
+<ParamField path="dynamic" type="tuple" default="(False, 0.5, 10)">
+  Dynamic cropping triple `(state, det_threshold, margin)`. When `state=True`,
+  the crop window follows the animal across frames. `det_threshold` sets the
+  minimum body-part confidence required to keep the crop active; `margin`
+  expands the bounding box by that many pixels.
+</ParamField>
+
+<ParamField path="robust_nframes" type="boolean" default="false">
+  When `True`, counts frames by reading the video sequentially rather than
+  relying on metadata. Slower but more reliable for corrupted files.
+</ParamField>
+
+<ParamField path="allow_growth" type="boolean" default="false">
+  **TensorFlow engine only.** Prevents TensorFlow from pre-allocating the full
+  GPU memory region, starting small and growing as needed.
+</ParamField>
+
+<ParamField path="use_shelve" type="boolean" default="false">
+  Write predictions frame-by-frame to a persistent shelf file instead of
+  accumulating them in memory. Useful for very long videos.
+</ParamField>
+
+<ParamField path="auto_track" type="boolean" default="true">
+  **Multi-animal projects only.** When `True`, tracklet conversion and
+  stitching are run automatically, producing the final `.h5` file. Set to
+  `False` to run `convert_detections2tracklets` and `stitch_tracklets`
+  manually.
+</ParamField>
+
+<ParamField path="n_tracks" type="integer | null" default="null">
+  **Multi-animal projects only.** Number of tracks to reconstruct. Defaults to
+  the number of `individuals` defined in `config.yaml`. Override this when the
+  video contains a different number of animals than the model was trained on.
+</ParamField>
+
+<ParamField path="animal_names" type="string[]" default="null">
+  **Multi-animal projects only.** Names assigned to each reconstructed
+  individual in the output file. If provided and `n_tracks` is `None`,
+  `n_tracks` is inferred from the length of this list.
+</ParamField>
+
+<ParamField path="identity_only" type="boolean" default="false">
+  **Multi-animal projects only.** When `True`, assembly and tracking rely
+  exclusively on the identity predictions learned by the model.
+</ParamField>
+
+<ParamField path="calibrate" type="boolean" default="false">
+  **Multi-animal projects only.** Use training data to calibrate the animal
+  assembly step. Improves robustness to wrong body-part links but requires very
+  little missing data.
+</ParamField>
+
+<ParamField path="modelprefix" type="string" default='""'>
+  Subdirectory within the project folder that contains the model weights.
+  Useful when multiple model variants share one project.
+</ParamField>
+
+<ParamField path="engine" type="Engine | null" default="null">
+  Explicitly select the inference backend (`Engine.PYTORCH` or `Engine.TF`).
+  By default the engine is read from the shuffle metadata.
+</ParamField>
+
+### Returns
+
+<ResponseField name="DLCScorer" type="string">
+  The scorer string (e.g. `DLC_resnet50_reaching-taskSep24shuffle1_200000`) that
+  identifies the model used. This string is embedded in all output filenames.
+</ResponseField>
+
+---
+
+## analyze\_images
+
+Runs inference on still images (or directories of images) using a PyTorch model. Predictions are stored as a MultiIndex Pandas DataFrame in HDF5 format in the same directory as the images (or in `destfolder`).
+
+<Note>
+  This function is only implemented for the PyTorch engine. Calling it with a
+  TensorFlow shuffle raises `NotImplementedError`.
+</Note>
+
+```python
+import deeplabcut
+
+# Analyze all images in a folder
+deeplabcut.analyze_images(
+    config="/analysis/project/reaching-task/config.yaml",
+    images="/analysis/project/my_images",
+    shuffle=1,
+    save_as_csv=True,
+    plotting=True,
+)
+```
+
+### Parameters
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="images" type="string | string[]" required>
+  Path to an image file, a directory containing images, or a list of image
+  paths or directories. By default, `.jpg`, `.jpeg`, and `.png` files are
+  analyzed.
+</ParamField>
+
+<ParamField path="frame_type" type="string | null" default="null">
+  Restrict analysis to images with this file suffix (e.g. `".png"`). When
+  `None`, all `.jpg`, `.jpeg`, and `.png` files are analyzed.
+</ParamField>
+
+<ParamField path="destfolder" type="string | null" default="null">
+  Directory where the output `.h5` file is written. Defaults to the directory
+  containing the first image or the first directory passed in `images`.
+</ParamField>
+
+<ParamField path="shuffle" type="integer" default="1">
+  Shuffle index specifying which trained model to use.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="integer" default="0">
+  Index into the `TrainingFraction` list in `config.yaml`.
+</ParamField>
+
+<ParamField path="max_individuals" type="integer | null" default="null">
+  Maximum number of individuals to detect per image. Defaults to the number of
+  individuals in the project config.
+</ParamField>
+
+<ParamField path="device" type="string | null" default="null">
+  CUDA device string, e.g. `"cpu"`, `"cuda"`, `"cuda:0"`. Defaults to the
+  value in `pytorch_config.yaml`.
+</ParamField>
+
+<ParamField path="snapshot_index" type="integer | null" default="null">
+  Index of the model snapshot to use (0-based). Pass `-1` for the last
+  snapshot. Defaults to the value in the project config.
+</ParamField>
+
+<ParamField path="detector_snapshot_index" type="integer | null" default="null">
+  **Top-down models only.** Index of the detector snapshot to use. Pass `-1`
+  for the last snapshot.
+</ParamField>
+
+<ParamField path="save_as_csv" type="boolean" default="false">
+  Also writes predictions to a `.csv` file.
+</ParamField>
+
+<ParamField path="plotting" type="boolean | string" default="false">
+  Plot predictions overlaid on the source images. Accepts `True`, `False`,
+  `"bodypart"`, or `"individual"`. Images are saved to a `LabeledImages_{scorer}`
+  folder next to the output file.
+</ParamField>
+
+<ParamField path="pcutoff" type="float | null" default="null">
+  Confidence threshold for plotting keypoints. Must be in `(0, 1)`. Defaults
+  to the project config value.
+</ParamField>
+
+<ParamField path="plot_skeleton" type="boolean" default="false">
+  Draw skeleton connections between body parts when plotting, if a skeleton is
+  defined in `config.yaml`.
+</ParamField>
+
+<ParamField path="modelprefix" type="string" default='""'>
+  Subdirectory within the project folder containing the model weights.
+</ParamField>
+
+### Returns
+
+<ResponseField name="predictions" type="object">
+  A dictionary mapping each image path (as a string) to an array of model
+  predictions for that image.
+</ResponseField>
+
+---
+
+## analyze\_time\_lapse\_frames
+
+Analyzes all images of a given type in a folder and writes a single combined output file. Useful for microscopy or camera-trap time-lapse experiments where frames are stored as individual image files.
+
+```python
+import deeplabcut
+
+deeplabcut.analyze_time_lapse_frames(
+    config="/analysis/project/reaching-task/config.yaml",
+    directory="/analysis/project/timelapseexperiment1",
+    frametype=".png",
+    save_as_csv=True,
+)
+```
+
+### Parameters
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="directory" type="string" required>
+  Full path to the folder containing the image frames to analyze.
+</ParamField>
+
+<ParamField path="frametype" type="string" default='".png"'>
+  File extension of the frames to analyze. Only images with this extension are
+  processed.
+</ParamField>
+
+<ParamField path="shuffle" type="integer" default="1">
+  Shuffle index of the training dataset used for inference.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="integer" default="0">
+  Index into the `TrainingFraction` list in `config.yaml`.
+</ParamField>
+
+<ParamField path="gputouse" type="integer | null" default="null">
+  **TensorFlow engine only.** GPU index. Use `device` for PyTorch.
+</ParamField>
+
+<ParamField path="device" type="string | null" default="null">
+  **PyTorch engine only.** CUDA device string, e.g. `"cuda:0"`.
+</ParamField>
+
+<ParamField path="save_as_csv" type="boolean" default="false">
+  Also writes predictions to a `.csv` file.
+</ParamField>
+
+<ParamField path="modelprefix" type="string" default='""'>
+  Subdirectory within the project folder containing the model weights.
+</ParamField>
+
+---
+
+## video\_inference\_superanimal
+
+Runs inference on videos using a pre-trained SuperAnimal model without requiring a custom project. Model checkpoints are downloaded automatically from HuggingFace on first use.
+
+<Tip>
+  SuperAnimal models are available for quadrupeds, top-view mice, birds, and
+  human bodies. Pass `video_adapt=True` to fine-tune the model on the first
+  video in your list before running inference on all others — no manual
+  labeling required.
+</Tip>
+
+```python
+import deeplabcut
+
+# Top-down mouse tracking with video adaptation
+deeplabcut.video_inference_superanimal(
+    videos=["/data/session1.mp4", "/data/session2.mp4"],
+    superanimal_name="superanimal_topviewmouse",
+    model_name="hrnet_w32",
+    detector_name="fasterrcnn_resnet50_fpn_v2",
+    max_individuals=3,
+    video_adapt=True,
+    pseudo_threshold=0.1,
+    bbox_threshold=0.9,
+    detector_epochs=4,
+    pose_epochs=4,
+    pcutoff=0.1,
+)
+```
+
+### Parameters
+
+<ParamField path="videos" type="string | string[]" required>
+  Path to a single video or a list of video paths. When `video_adapt=True`,
+  only the first video is used for adaptation training; all videos receive
+  the adapted model.
+</ParamField>
+
+<ParamField path="superanimal_name" type="string" required>
+  Name of the SuperAnimal dataset, e.g. `"superanimal_topviewmouse"`,
+  `"superanimal_quadruped"`, `"superanimal_superbird"`, or
+  `"superanimal_humanbody"`.
+</ParamField>
+
+<ParamField path="model_name" type="string" required>
+  Model architecture to use. Examples: `"hrnet_w32"` (PyTorch), `"dlcrnet"`
+  (TensorFlow), `"rtmpose_x"` (human body). The engine is selected
+  automatically based on this value.
+</ParamField>
+
+<ParamField path="detector_name" type="string | null" default="null">
+  **Top-down PyTorch models only.** Object detector architecture, e.g.
+  `"fasterrcnn_resnet50_fpn_v2"`. Required for all non-human-body PyTorch
+  models.
+</ParamField>
+
+<ParamField path="scale_list" type="integer[]" default="[]">
+  **Bottom-up TensorFlow models only.** Spatial pyramid resolutions (e.g.
+  `[200, 300, 400]`). Leave empty for PyTorch models.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='".mp4"'>
+  Extension filter when `videos` is a directory.
+</ParamField>
+
+<ParamField path="dest_folder" type="string | null" default="null">
+  Folder where output files are saved. Defaults to the same directory as each
+  video.
+</ParamField>
+
+<ParamField path="cropping" type="integer[] | null" default="null">
+  Crop region as `[x1, x2, y1, y2]` applied before inference. Only supported
+  with the PyTorch engine.
+</ParamField>
+
+<ParamField path="video_adapt" type="boolean" default="false">
+  When `True`, performs self-supervised video adaptation using pseudo-labels
+  from the first video before running final inference. Generalizes to all other
+  videos in the list.
+</ParamField>
+
+<ParamField path="batch_size" type="integer" default="1">
+  **PyTorch engine only.** Batch size for pose model inference.
+</ParamField>
+
+<ParamField path="detector_batch_size" type="integer" default="1">
+  **PyTorch engine only.** Batch size for the detector during inference.
+</ParamField>
+
+<ParamField path="pcutoff" type="float" default="0.1">
+  Confidence cutoff for keypoint predictions used when creating labeled videos
+  and filtering pseudo-labels.
+</ParamField>
+
+<ParamField path="max_individuals" type="integer" default="10">
+  Maximum number of individuals to detect per frame. Used only for top-down
+  models.
+</ParamField>
+
+<ParamField path="pseudo_threshold" type="float" default="0.1">
+  **`video_adapt=True` only.** Keypoint confidence threshold for constructing
+  pseudo-labels. Higher values discard more uncertain predictions.
+</ParamField>
+
+<ParamField path="bbox_threshold" type="float" default="0.9">
+  **`video_adapt=True` only.** Bounding-box confidence threshold for the
+  detector pseudo-labels.
+</ParamField>
+
+<ParamField path="pose_epochs" type="integer" default="4">
+  **`video_adapt=True`, PyTorch engine only.** Number of adaptation training
+  epochs for the pose model.
+</ParamField>
+
+<ParamField path="detector_epochs" type="integer" default="4">
+  **`video_adapt=True`, PyTorch engine only.** Number of adaptation training
+  epochs for the detector.
+</ParamField>
+
+<ParamField path="device" type="string | null" default='"auto"'>
+  **PyTorch engine only.** Device string, e.g. `"cuda:0"`, `"cpu"`.
+</ParamField>
+
+<ParamField path="create_labeled_video" type="boolean" default="true">
+  When `True`, writes a labeled video file alongside the prediction output.
+</ParamField>
+
+<ParamField path="plot_bboxes" type="boolean" default="true">
+  Draw detector bounding boxes on the labeled video. Only relevant for top-down
+  models.
+</ParamField>
+
+---
+
+## create\_labeled\_video
+
+Renders a new video with body-part predictions overlaid on each frame. The source video must already be analyzed with `analyze_videos`.
+
+```python
+import deeplabcut
+
+deeplabcut.create_labeled_video(
+    config="/analysis/project/reaching-task/config.yaml",
+    videos=["/analysis/project/videos/reachingvideo1.avi"],
+    filtered=True,           # use filterpredictions output if available
+    draw_skeleton=True,
+    trailpoints=10,
+    color_by="individual",   # color each animal differently
+)
+```
+
+### Parameters
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="videos" type="string[]" required>
+  List of video paths (or a directory path) to create labeled videos for.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  Extension filter for directory input.
+</ParamField>
+
+<ParamField path="shuffle" type="integer" default="1">
+  Shuffle index of the model whose predictions to overlay.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="integer" default="0">
+  Index into the `TrainingFraction` list in `config.yaml`.
+</ParamField>
+
+<ParamField path="filtered" type="boolean" default="false">
+  When `True`, uses the filtered predictions produced by `filterpredictions`
+  rather than raw frame-by-frame predictions.
+</ParamField>
+
+<ParamField path="fastmode" type="boolean" default="true">
+  When `True`, uses OpenCV for rendering (faster). When `False`, uses
+  Matplotlib, which allows transparency (`alphavalue`) and easier
+  customization.
+</ParamField>
+
+<ParamField path="displayedbodyparts" type="string | string[]" default='"all"'>
+  Body parts to render. Either `"all"` or a list of body-part names from
+  `config.yaml`, e.g. `["hand", "Joystick"]`.
+</ParamField>
+
+<ParamField path="displayedindividuals" type="string | string[]" default='"all"'>
+  **Multi-animal projects only.** Individuals to render.
+</ParamField>
+
+<ParamField path="draw_skeleton" type="boolean" default="false">
+  Connect body parts with lines forming the skeleton defined in `config.yaml`.
+</ParamField>
+
+<ParamField path="trailpoints" type="integer" default="0">
+  Number of previous frames to show as a fading trail for each body part.
+</ParamField>
+
+<ParamField path="color_by" type="string" default='"bodypart"'>
+  Coloring strategy: `"bodypart"` (each body part has a unique color) or
+  `"individual"` (each animal has a unique color).
+</ParamField>
+
+<ParamField path="codec" type="string" default='"mp4v"'>
+  Video codec. See [fourcc.org](http://www.fourcc.org/codecs.php) for options.
+</ParamField>
+
+<ParamField path="outputframerate" type="integer | null" default="null">
+  Output frame rate. Defaults to the original video frame rate.
+</ParamField>
+
+<ParamField path="destfolder" type="string | null" default="null">
+  Destination folder for the labeled video file.
+</ParamField>
+
+<ParamField path="pcutoff" type="float | null" default="null">
+  Override the project-level `pcutoff` for deciding which keypoints to render.
+</ParamField>
+
+<ParamField path="dotsize" type="integer" default="8">
+  Radius in pixels of each keypoint marker dot.
+</ParamField>
+
+<ParamField path="colormap" type="string" default='"rainbow"'>
+  Matplotlib colormap name used to color keypoints.
+</ParamField>
+
+<ParamField path="alphavalue" type="float" default="0.5">
+  Transparency of keypoint markers. Only used in `fastmode=False`.
+</ParamField>
+
+<ParamField path="overwrite" type="boolean" default="false">
+  Overwrite existing labeled video files.
+</ParamField>
+
+<ParamField path="track_method" type="string" default='""'>
+  Tracker used to generate the data (`"box"`, `"skeleton"`, or `"ellipse"`
+  for multi-animal projects). Defaults to the value in `config.yaml`.
+</ParamField>
+
+---
+
+## create\_video\_with\_all\_detections
+
+Creates a labeled video showing **all** raw detections stored in the
+`*_full.pickle` file produced during multi-animal inference, before tracking
+and identity assignment. Useful for debugging assembly and tracker quality.
+
+```python
+import deeplabcut
+
+deeplabcut.create_video_with_all_detections(
+    config="/analysis/project/maDLC-task/config.yaml",
+    videos=["/analysis/project/videos/session1.mp4"],
+    shuffle=1,
+)
+```
+
+### Parameters
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="videos" type="string[]" required>
+  List of video paths or a directory.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  Extension filter when a directory is passed.
+</ParamField>
+
+<ParamField path="shuffle" type="integer" default="1">
+  Shuffle index whose detections to render.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="integer" default="0">
+  Index into the `TrainingFraction` list.
+</ParamField>
+
+<ParamField path="displayedbodyparts" type="string | string[]" default='"all"'>
+  Body parts to include in the visualization.
+</ParamField>
+
+<ParamField path="cropping" type="integer[] | null" default="null">
+  Crop coordinates `[x1, x2, y1, y2]` used during the original analysis. Pass
+  to shift detections back to original-frame coordinates.
+</ParamField>
+
+<ParamField path="destfolder" type="string | null" default="null">
+  Destination folder for analysis data (must match the folder used in
+  `analyze_videos`).
+</ParamField>
+
+<ParamField path="confidence_to_alpha" type="boolean | callable" default="false">
+  Map keypoint confidence to marker transparency. When `False`, all markers are
+  fully opaque. When `True`, the default mapping `f(x) = x` is used. A custom
+  callable `f: [0, 1] -> [0, 1]` can also be provided.
+</ParamField>
+
+<ParamField path="plot_bboxes" type="boolean" default="true">
+  **PyTorch top-down models only.** Also draw detector bounding boxes.
+</ParamField>

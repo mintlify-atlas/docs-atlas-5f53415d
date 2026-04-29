@@ -1,0 +1,135 @@
+---
+title: "Frequently asked questions about DeepLabCut"
+description: "Answers to common questions about labeling, hardware, GPU requirements, model choice, Google Colab, PyTorch vs TensorFlow, and getting help."
+---
+
+This page collects answers to the questions that come up most frequently from new and experienced users. If your question is not answered here, check the [Image.sc forum](https://forum.image.sc/tag/deeplabcut) or [open a GitHub issue](https://github.com/DeepLabCut/DeepLabCut/issues).
+
+<AccordionGroup>
+
+  <Accordion title="How many frames do I need to label?">
+    Transfer learning means DeepLabCut requires far less training data than training from scratch. In practice, **50–200 labeled frames** is a typical starting point for most single-animal projects.
+
+    More important than the total number of frames is **diversity**: label frames across different individuals, backgrounds, lighting conditions, and postures. Ten videos each contributing 10–20 frames will outperform two videos each contributing 50–100 frames, even if the total frame count is similar.
+
+    Start with around 200 frames and evaluate. If the test error is acceptable and performance on held-out videos looks good, you do not need more data. If not, use the outlier-frame refinement workflow to add targeted labels and retrain.
+  </Accordion>
+
+  <Accordion title="Single animal vs multi-animal: which should I use?">
+    Use **standard (single-animal) DeepLabCut** when:
+    - You have one animal per video.
+    - You have multiple animals that are visually distinct (different colours, markings, accessories) and you can label them consistently.
+
+    Use **multi-animal DeepLabCut (maDLC)** when:
+    - You have two or more visually identical animals in the same frame.
+    - You need identity tracking across the video.
+
+    <Warning>
+      Do not use the multi-animal flag to model anatomically fixed keypoints (e.g. whisker 1, whisker 2, whisker 3) as separate individuals. Each whisker always occupies a predictable spatial location, so treating them as individuals will hurt performance compared to standard mode.
+    </Warning>
+
+    DeepLabCut 3.0+ also supports **BUCTD** (bottom-up conditional top-down), a hybrid approach that can outperform pure top-down or bottom-up models on certain multi-animal datasets. See the [architectures guide](/advanced/architectures) for details on BUCTD and other model options.
+  </Accordion>
+
+  <Accordion title="What GPU do I need?">
+    DeepLabCut runs on any NVIDIA GPU with CUDA support. For practical training speeds, an NVIDIA GPU with at least **8 GB VRAM** is recommended (e.g. RTX 3080, RTX 4070, or better). Larger models (HRNet-w48, RTMPose-x) benefit from more VRAM.
+
+    For inference only (analyzing videos without training), a modest GPU is sufficient, and even CPU inference is possible for smaller models.
+
+    See the [installation guide](/installation) for the recommended CUDA and PyTorch version combinations.
+  </Accordion>
+
+  <Accordion title="Can I use DeepLabCut without a GPU?">
+    Yes. DeepLabCut runs on CPU, though training is significantly slower. For exploratory work or small projects, CPU-only training is feasible. For larger projects or faster iteration, use a GPU or a cloud computing platform such as Google Colab.
+
+    You can also use [SuperAnimal pretrained models](/modelzoo/overview) for inference without any training, which reduces the computational burden considerably.
+  </Accordion>
+
+  <Accordion title="What are the hardware requirements?">
+    **Minimum:**
+    - A modern CPU (any operating system: Linux, Windows, macOS)
+    - Python 3.10+
+    - ~4 GB RAM for small projects
+
+    **Recommended for training:**
+    - NVIDIA GPU with 8+ GB VRAM and a compatible CUDA version
+    - 16+ GB system RAM
+    - SSD storage for faster data loading
+
+    DeepLabCut is officially tested on Linux, Windows, and macOS. For GPU-accelerated training on macOS (Apple Silicon), check the latest [release notes](https://github.com/DeepLabCut/DeepLabCut/releases) for M-series support status.
+  </Accordion>
+
+  <Accordion title="How do I use DeepLabCut on Google Colab?">
+    Google Colab provides free (and paid) GPU access and is a practical way to try DeepLabCut without a local GPU.
+
+    Official Colab notebooks are available in the [examples directory](https://github.com/DeepLabCut/DeepLabCut/blob/main/examples/README.md). The single-animal mouse open-field demo is a good starting point:
+
+    [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/DeepLabCut/DeepLabCut/blob/master/examples/COLAB/COLAB_DEMO_mouse_openfield.ipynb)
+
+    Note that the GUI is not available in Colab. Use the Python API (terminal/notebook interface) when working in cloud environments.
+  </Accordion>
+
+  <Accordion title="What is the difference between the PyTorch and TensorFlow engines?">
+    DeepLabCut 3.0 introduced **PyTorch** as the primary deep learning engine. Key differences:
+
+    | | PyTorch (recommended) | TensorFlow (legacy) |
+    |---|---|---|
+    | Status | Active, default | Supported, will be deprecated in 2027 |
+    | Architectures | ResNet, HRNet, RTMPose, BUCTD, and more | ResNet, MobileNetV2, EfficientNet |
+    | Installation | Simpler, fewer version constraints | Requires TF ≤ 2.10 on Windows, ≤ 2.12 elsewhere |
+    | Python support | 3.10+ | 3.10 |
+    | Performance | Generally equal or better | Baseline |
+
+    The **high-level API is identical** between engines, so projects created with TensorFlow can be benchmarked against PyTorch models using the same train/test split (see [benchmarking guide](/resources/benchmarks)).
+
+    New projects should use the PyTorch engine. TensorFlow support will be removed in a future major release.
+  </Accordion>
+
+  <Accordion title="How do I update DeepLabCut?">
+    To update to the latest release using pip:
+
+    ```bash
+    pip install --upgrade deeplabcut
+    ```
+
+    To install the latest pre-release (with the PyTorch engine):
+
+    ```bash
+    pip install --pre "deeplabcut[gui]"
+    ```
+
+    If you used a conda environment, activate it first:
+
+    ```bash
+    conda activate <your-dlc-env>
+    pip install --upgrade deeplabcut
+    ```
+
+    Check the [releases page](https://github.com/DeepLabCut/DeepLabCut/releases) for changelog and migration notes before upgrading between major versions (e.g. 2.x → 3.x).
+  </Accordion>
+
+  <Accordion title="What animals and objects can I track?">
+    DeepLabCut is animal- and object-agnostic. As long as you can **see** the body part or object in the video and **label** it consistently, you can track it. Published applications include:
+
+    - Laboratory animals: mice, rats, flies (*Drosophila*), fish, leeches, worms
+    - Large animals: horses, cheetahs, primates
+    - Humans and hands
+    - Non-biological objects: robot end-effectors, tools
+
+    For common laboratory species and quadrupeds, the [SuperAnimal pretrained models](/modelzoo/overview) may let you skip labeling entirely by using zero-shot inference.
+  </Accordion>
+
+  <Accordion title="How do I get help or report issues?">
+    There are several support channels, each suited to different needs:
+
+    | Channel | Best for |
+    |---|---|
+    | [Image.sc forum](https://forum.image.sc/tag/deeplabcut) | Usage questions, help from the community |
+    | [GitHub Issues](https://github.com/DeepLabCut/DeepLabCut/issues) | Bug reports and confirmed code issues |
+    | [Gitter community](https://gitter.im/DeepLabCut/community) | Discussion and collaboration with other users |
+    | [GitHub Contributing guide](https://github.com/DeepLabCut/DeepLabCut/blob/master/CONTRIBUTING.md) | Contributing code, fixes, or features |
+
+    Before opening a GitHub issue, search existing issues to see whether your problem has already been reported or resolved. The core dev team typically responds within 2–5 business days.
+  </Accordion>
+
+</AccordionGroup>

@@ -1,81 +1,197 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
-icon: 'rocket'
+title: "Get started with DeepLabCut in minutes"
+description: "Go from raw video to tracked animal poses using DeepLabCut's Python API — create a project, label frames, train a model, and analyze videos."
 ---
 
-## Get started in three steps
+DeepLabCut follows a linear workflow: create a project, extract and label frames, train a model, and run inference on your videos. This page walks you through the full process using the Python API. If you want to skip training entirely, jump to the [SuperAnimal fast path](#superanimal-fast-path) at the end.
 
-Get your documentation site running locally and make your first customization.
+<Tip>
+  Training on a GPU is strongly recommended. A CPU-only workflow is possible for project setup and labeling, but training will be roughly 10x slower. See [installation](/installation) for GPU setup instructions.
+</Tip>
 
-### Step 1: Set up your local environment
+## Full custom training workflow
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Steps>
+  <Step title="Import DeepLabCut">
+    Open a Python session (or Jupyter notebook) and import DeepLabCut:
 
-### Step 2: Deploy your changes
+    ```python
+    import deeplabcut
+    ```
+  </Step>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+  <Step title="Create a new project">
+    A project stores your configuration, labeled frames, training data, and models in one directory. Provide a project name, your name, and a list of video paths:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    ```python
+    config_path = deeplabcut.create_new_project(
+        "reaching-mice",           # project name
+        "YourName",                # experimenter name
+        ["/data/videos/mouse1.mp4", "/data/videos/mouse2.mp4"],
+        working_directory="/data/projects",
+        copy_videos=True,
+    )
+    ```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    `create_new_project` returns the path to the project's `config.yaml` file. Store this path in `config_path` — you will pass it to every subsequent function.
 
-### Step 3: Go live
+    Open `config.yaml` in a text editor to define the **body parts** you want to track (e.g., `nose`, `left_ear`, `right_ear`, `tail_base`) and adjust other project settings before labeling.
+  </Step>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+  <Step title="Extract frames">
+    DeepLabCut samples representative frames from your videos for you to label. The default method (`kmeans`) selects frames that cover the diversity of poses in your footage:
+
+    ```python
+    deeplabcut.extract_frames(
+        config_path,
+        mode="automatic",
+        algo="kmeans",
+        userfeedback=False,
+    )
+    ```
+
+    Aim for 50–200 labeled frames per body part for good results. More frames improve accuracy but increase labeling time.
+  </Step>
+
+  <Step title="Label frames">
+    Open the labeling GUI to annotate keypoints on the extracted frames:
+
+    ```python
+    deeplabcut.label_frames(config_path)
+    ```
+
+    The napari-based GUI opens with your extracted frames. Click each body part's corresponding point on every frame. When done, save and close the GUI.
+
+    <Note>
+      The GUI requires `deeplabcut[gui]` to be installed. If you installed the headless package, label frames using the command-line GUI: `python -m deeplabcut`.
+    </Note>
+  </Step>
+
+  <Step title="Check your labels (optional)">
+    Verify that your labels look correct by generating overlay images:
+
+    ```python
+    deeplabcut.check_labels(config_path)
+    ```
+
+    Review the generated images in the `labeled-data` folder of your project to spot any mislabeled frames before training.
+  </Step>
+
+  <Step title="Create the training dataset">
+    Convert your labeled frames into a training dataset. This shuffles and splits your data and generates the augmentation config:
+
+    ```python
+    deeplabcut.create_training_dataset(config_path)
+    ```
+  </Step>
+
+  <Step title="Train the network">
+    Start training. DeepLabCut will print loss values and save checkpoints as training progresses:
+
+    ```python
+    deeplabcut.train_network(config_path, maxiters=50000)
+    ```
+
+    Training time depends on the number of labeled frames, the model architecture, and your hardware. For most single-animal projects, 50,000 iterations on a GPU takes 1–4 hours.
+  </Step>
+
+  <Step title="Evaluate the trained network">
+    Measure prediction error on the test set to assess model quality:
+
+    ```python
+    deeplabcut.evaluate_network(config_path, plotting=True)
+    ```
+
+    This prints the train and test RMSE (root mean squared error). Review the generated evaluation plots to check that predicted keypoints align with your labels.
+  </Step>
+
+  <Step title="Analyze videos">
+    Run pose estimation on new videos. DeepLabCut writes predictions to an HDF5 file (`.h5`) alongside the video:
+
+    ```python
+    deeplabcut.analyze_videos(
+        config_path,
+        ["/data/videos/new_video.mp4"],
+        videotype=".mp4",
+        save_as_csv=True,
+    )
+    ```
+  </Step>
+
+  <Step title="Visualize results">
+    Filter predictions to smooth trajectories, then create a labeled video and plot body-part trajectories:
+
+    ```python
+    # Smooth predictions with a median filter
+    deeplabcut.filterpredictions(config_path, ["/data/videos/new_video.mp4"])
+
+    # Create a video with keypoints overlaid
+    deeplabcut.create_labeled_video(
+        config_path,
+        ["/data/videos/new_video.mp4"],
+        filtered=True,
+    )
+
+    # Plot x/y trajectories over time
+    deeplabcut.plot_trajectories(
+        config_path,
+        ["/data/videos/new_video.mp4"],
+        filtered=True,
+    )
+    ```
+  </Step>
+</Steps>
+
+## SuperAnimal fast path
+
+If you want to skip data labeling and training entirely, use a pretrained SuperAnimal model. DeepLabCut ships with two foundation models:
+
+- **SuperAnimal-Quadruped** — general quadruped pose estimation (dogs, horses, cheetahs, rodents, and more)
+- **SuperAnimal-TopViewMouse** — top-down mouse pose estimation optimized for lab settings
+
+Run inference directly on a video:
+
+```python
+import deeplabcut
+
+deeplabcut.video_inference_superanimal(
+    videos=["/data/videos/mouse_openfield.mp4"],
+    superanimal_name="superanimal_topviewmouse",
+    model_name="hrnet_w32",
+    detector_name="fasterrcnn_resnet50_fpn_v2",
+)
+```
+
+<Tip>
+  SuperAnimal models work out-of-the-box for many common species and behaviors without any labeling. If the out-of-the-box performance is not sufficient, use `video_adapt=True` to run a short video-level adaptation that fine-tunes the model to your specific video — no manual labels required.
+</Tip>
+
+To adapt the model to your video during inference:
+
+```python
+deeplabcut.video_inference_superanimal(
+    videos=["/data/videos/mouse_openfield.mp4"],
+    superanimal_name="superanimal_topviewmouse",
+    model_name="hrnet_w32",
+    detector_name="fasterrcnn_resnet50_fpn_v2",
+    video_adapt=True,
+    adapt_iterations=1000,
+)
+```
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Single-animal guide" icon="paw" href="/guides/single-animal">
+    Complete walkthrough of the single-animal workflow with configuration details.
+  </Card>
+  <Card title="Multi-animal guide" icon="users" href="/guides/multi-animal">
+    Track multiple animals with identity and tracklet stitching.
+  </Card>
+  <Card title="Model Zoo" icon="brain" href="/modelzoo/overview">
+    Browse pretrained SuperAnimal models and learn about video adaptation.
+  </Card>
+  <Card title="API reference" icon="code" href="/api/create-project">
+    Full reference for every public DeepLabCut function.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

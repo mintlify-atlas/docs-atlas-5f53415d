@@ -1,0 +1,419 @@
+---
+title: "Single-animal pose estimation workflow"
+description: "Full DeepLabCut workflow for single-animal projects: create a project, label frames, train a model, analyze videos, and refine with active learning."
+---
+
+DeepLabCut's single-animal workflow takes you from raw video to tracked pose data in a series of well-defined steps. Each step produces artifacts consumed by the next, so follow the order below for a clean first run. You can use the Python API directly (shown here) or drive the same steps through the [Project Manager GUI](/guides/gui-overview).
+
+<Steps>
+
+<Step title="Create a new project">
+
+`create_new_project` builds the project directory tree, writes `config.yaml`, and registers your videos.
+
+```python
+import deeplabcut
+
+config_path = deeplabcut.create_new_project(
+    "ReachingMouse",          # project name
+    "YourName",               # experimenter name
+    [
+        "/data/videos/reach1.avi",
+        "/data/videos/reach2.avi",
+    ],
+    working_directory="/data/projects",
+    copy_videos=False,        # use symbolic links; set True to copy
+    multianimal=False,
+)
+```
+
+The call returns the path to `config.yaml`, which is used as `config_path` in every subsequent step. The project folder contains five subdirectories: `dlc-models`, `dlc-models-pytorch`, `labeled-data`, `training-datasets`, and `videos`.
+
+<Note>
+On Windows, always open the terminal with **Run as administrator** and format paths as `r"C:\Users\name\video.avi"` or `"C:\\Users\\name\\video.avi"`.
+</Note>
+
+**Add videos later** with:
+
+```python
+deeplabcut.add_new_videos(
+    config_path,
+    ["/data/videos/reach3.avi", "/data/videos/reach4.avi"],
+    copy_videos=False,
+)
+```
+
+</Step>
+
+<Step title="Configure the project">
+
+Open `config.yaml` in any text editor. You must define the `bodyparts` list before proceeding. Do not use spaces in bodypart names.
+
+```yaml
+# Example bodyparts for a reaching mouse
+bodyparts:
+  - snout
+  - leftear
+  - rightear
+  - spine1
+  - spine2
+  - tailbase
+
+# Optional: skeleton for visualization
+skeleton:
+  - [snout, leftear]
+  - [snout, rightear]
+  - [spine1, spine2]
+  - [spine2, tailbase]
+skeleton_color: white
+pcutoff: 0.4
+```
+
+Other parameters worth reviewing: `numframes2extract`, `start`, `stop` (video time range for frame extraction), `dotsize`, `colormap`, and `alphavalue`.
+
+</Step>
+
+<Step title="Extract frames">
+
+`extract_frames` samples representative frames from your videos and stores them under `labeled-data/`.
+
+```python
+deeplabcut.extract_frames(
+    config_path,
+    mode="automatic",   # "automatic" or "manual"
+    algo="kmeans",      # "uniform" or "kmeans"
+    crop=False,
+    userfeedback=False,
+)
+```
+
+- **`uniform`** — random temporal sampling; works well when postures vary throughout the video.
+- **`kmeans`** — clusters frames by visual appearance and picks representatives from each cluster; better for sparse behaviors.
+- **`manual`** — opens an interactive GUI to hand-pick frames.
+
+```python
+# Launch manual frame selection
+deeplabcut.extract_frames(config_path, "manual")
+```
+
+<Tip>
+Keep frame size small; large frames slow down both training and inference. Use `crop=True` to draw a region of interest that is written to `config.yaml`.
+</Tip>
+
+</Step>
+
+<Step title="Label frames">
+
+Launch the napari-based labeling GUI to annotate each extracted frame with the bodyparts defined in `config.yaml`.
+
+```python
+deeplabcut.label_frames(config_path)
+```
+
+The GUI opens with your image folders. Drop a folder from `labeled-data/` onto the canvas, then select the **Points layer** and click **+** to begin placing keypoints.
+
+**Key shortcuts:**
+
+| Key | Action |
+|-----|--------|
+| `2` | Labeling mode |
+| `3` | Selection mode |
+| `4` | Pan and zoom |
+| `M` | Cycle annotation modes |
+| `E` | Toggle edge coloring |
+| `F` | Toggle animal/bodypart color scheme |
+| `Backspace` | Delete a point |
+| `Ctrl+S` | Save the current layer |
+
+Labels are saved automatically to `CollectedData_<ScorerName>.h5` in each image folder when you press `Ctrl+S`.
+
+<Warning>
+Do not label invisible or occluded body parts — simply skip them. Label the same anatomical location consistently across all frames.
+</Warning>
+
+</Step>
+
+<Step title="Check labels">
+
+Verify that annotations were saved correctly before building the training dataset.
+
+```python
+deeplabcut.check_labels(config_path, visualizeindividuals=False)
+```
+
+This creates a `labeled/` subdirectory inside each video folder under `labeled-data/`, containing frames overlaid with the plotted keypoints. Review these images to catch misplaced labels, then reload `label_frames` to correct any errors.
+
+</Step>
+
+<Step title="Create training dataset">
+
+Merge all labeled frames, split into train and test sets, and generate the model configuration files.
+
+```python
+deeplabcut.create_training_dataset(config_path)
+```
+
+Select the neural network backbone at this stage by passing `net_type`. For PyTorch models, a `pytorch_config.yaml` is written to `dlc-models-pytorch/iteration-0/shuffleX/train/`.
+
+```python
+# Example: explicit backbone and shuffle count
+deeplabcut.create_training_dataset(
+    config_path,
+    num_shuffles=1,
+    net_type="resnet_50",
+)
+```
+
+To compare multiple architectures using the **same** train/test split:
+
+```python
+deeplabcut.create_training_dataset_from_existing_split(
+    config_path,
+    from_shuffle=0,
+    shuffles=[1, 2],
+    net_type="efficientnet_b0",
+)
+```
+
+<Note>
+Run `create_training_dataset` on the machine where you will train. If you label on a laptop and train on a GPU server, copy the project folder first and run this step there.
+</Note>
+
+</Step>
+
+<Step title="Train the network">
+
+Start training with the dataset created in the previous step.
+
+```python
+deeplabcut.train_network(config_path)
+```
+
+<Tabs>
+  <Tab title="PyTorch engine (recommended)">
+
+```python
+deeplabcut.train_network(
+    config_path,
+    shuffle=1,
+    trainingsetindex=0,
+    device="cuda:0",       # or "cpu"
+    max_snapshots_to_keep=5,
+    displayiters=100,
+    save_epochs=5,
+    epochs=200,
+)
+```
+
+Train until the loss plateaus — typically 100–250 epochs. Pretrained backbone weights are downloaded automatically before training begins.
+
+  </Tab>
+  <Tab title="TensorFlow engine">
+
+```python
+deeplabcut.train_network(
+    config_path,
+    shuffle=1,
+    trainingsetindex=0,
+    gputouse=None,
+    max_snapshots_to_keep=5,
+    autotune=False,
+    displayiters=100,
+    saveiters=25000,
+    maxiters=300000,
+    allow_growth=True,
+)
+```
+
+Train until ~500,000 iterations with batch size 1, or until loss plateaus.
+
+  </Tab>
+</Tabs>
+
+Checkpoints (snapshots) are stored in `dlc-models-pytorch/iteration-0/shuffleX/train/` and can be resumed by setting `resume_training_from` in `pytorch_config.yaml`.
+
+</Step>
+
+<Step title="Evaluate the network">
+
+Compute the root mean square error (RMSE) between manual labels and model predictions on both the training and test sets.
+
+```python
+deeplabcut.evaluate_network(config_path, Shuffles=[1], plotting=True)
+```
+
+Results are written to `evaluation-results-pytorch/` (or `evaluation-results/` for TensorFlow). Setting `plotting=True` saves overlay images for visual inspection.
+
+**Key optional parameters:**
+
+```python
+deeplabcut.evaluate_network(
+    config_path,
+    Shuffles=[1],
+    plotting=True,
+    show_errors=True,
+    comparisonbodyparts="all",  # or a list of specific bodyparts
+    pcutoff=0.6,                # PyTorch engine only; set in config.yaml for TF
+)
+```
+
+Acceptable RMSE depends on the size of the tracked body parts and labeling variability. If errors are high: verify label quality, confirm loss has converged, and consider labeling additional frames.
+
+<Tip>
+Optionally visualize intermediate feature maps with `deeplabcut.extract_save_all_maps(config_path, shuffle=1, Indices=[0, 5])`.
+</Tip>
+
+</Step>
+
+<Step title="Analyze videos">
+
+Run inference on new videos. Videos do not need to be added to `config.yaml`.
+
+```python
+deeplabcut.analyze_videos(
+    config_path,
+    ["/data/videos/newvideo.avi"],
+    save_as_csv=True,
+)
+```
+
+Results are stored as an HDF5 file (`.h5`) alongside the video — a MultiIndex Pandas array with columns for bodypart name, `x`, `y`, and `likelihood` per frame.
+
+**Full parameter reference:**
+
+```python
+deeplabcut.analyze_videos(
+    config_path,
+    videos,
+    videotype="avi",
+    shuffle=1,
+    trainingsetindex=0,
+    gputouse=None,
+    save_as_csv=False,
+    destfolder=None,
+    dynamic=(False, 0.5, 10),  # (enable, detection_threshold, margin_px)
+)
+```
+
+Enable dynamic cropping (`dynamic=(True, 0.5, 10)`) to speed up analysis when the animal occupies a small fraction of a large frame.
+
+**Optional: filter predictions** to smooth noisy trajectories before visualization:
+
+```python
+deeplabcut.filterpredictions(
+    config_path,
+    ["/data/videos/newvideo.avi"],
+    filtertype="arima",
+    ARdegree=3,
+    MAdegree=1,
+)
+```
+
+This writes a `_filtered.h5` file that downstream functions accept via `filtered=True`.
+
+</Step>
+
+<Step title="Create labeled video">
+
+Overlay predicted keypoints on the original video.
+
+```python
+deeplabcut.create_labeled_video(
+    config_path,
+    ["/data/videos/newvideo.avi"],
+    save_frames=False,
+)
+```
+
+**Common options:**
+
+```python
+# Use filtered predictions
+deeplabcut.create_labeled_video(
+    config_path,
+    ["/data/videos/newvideo.avi"],
+    filtered=True,
+)
+
+# Draw skeleton and trail points (use fastmode=False for best quality)
+deeplabcut.create_labeled_video(
+    config_path,
+    ["/data/videos/newvideo.avi"],
+    draw_skeleton=True,
+    trailpoints=10,
+    fastmode=False,
+)
+
+# Keypoint-only (Johansson-style) visualization
+deeplabcut.create_labeled_video(
+    config_path,
+    ["/data/videos/newvideo.avi"],
+    keypoints_only=True,
+)
+```
+
+To use the skeleton overlay, define `skeleton` and `skeleton_color` in `config.yaml` first (or use `deeplabcut.SkeletonBuilder(config_path)` for an interactive builder).
+
+</Step>
+
+<Step title="Plot trajectories">
+
+Inspect tracking quality with trajectory plots saved to a `plot-poses/` folder next to each video.
+
+```python
+deeplabcut.plot_trajectories(
+    config_path,
+    ["/data/videos/newvideo.avi"],
+)
+```
+
+The output includes: bodypart coordinates vs. time, likelihood vs. time, x-vs-y scatter plots, and histograms of frame-to-frame displacements. High likelihood and small displacement histograms indicate good tracking.
+
+</Step>
+
+<Step title="Extract outlier frames and refine (active learning)">
+
+When tracking errors remain after the first training iteration, use active learning to find and correct problematic frames, then retrain.
+
+**Extract outlier frames:**
+
+```python
+deeplabcut.extract_outlier_frames(
+    config_path,
+    ["/data/videos/newvideo.avi"],
+    outlieralgorithm="jump",  # "fitting", "jump", "uncertain", or "manual"
+)
+```
+
+- **`fitting`** — ARIMA state-space model; identifies frames where predictions deviate from the fitted trajectory by more than `epsilon` pixels.
+- **`jump`** — flags frames where a body part moved more than `epsilon` pixels since the last frame.
+- **`uncertain`** — flags frames where predicted likelihood falls below `p_bound`.
+- **`manual`** — opens a GUI for visual selection.
+
+**Refine labels in the napari GUI:**
+
+```python
+deeplabcut.refine_labels(config_path)
+```
+
+In the GUI, correct mislabeled or missing keypoints in the `machinelabels` layer and save with `Ctrl+S`.
+
+**Merge the refined data and retrain:**
+
+```python
+deeplabcut.merge_datasets(config_path)
+```
+
+`merge_datasets` automatically increments the `iteration` counter in `config.yaml`. Then repeat from the **Create training dataset** step:
+
+```python
+deeplabcut.create_training_dataset(config_path)
+deeplabcut.train_network(config_path)
+deeplabcut.evaluate_network(config_path, Shuffles=[1], plotting=True)
+```
+
+Continue this cycle until the network generalizes to your satisfaction.
+
+</Step>
+
+</Steps>

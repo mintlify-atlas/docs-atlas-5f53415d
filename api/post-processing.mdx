@@ -1,0 +1,567 @@
+---
+title: "Post-processing and trajectory analysis API"
+description: "Filter noisy pose predictions, analyze skeleton kinematics, plot trajectories, stitch multi-animal tracklets, and convert HDF5 output to CSV or NWB format."
+---
+
+After running `analyze_videos`, DeepLabCut stores per-frame body-part predictions as a MultiIndex Pandas DataFrame in an HDF5 (`.h5`) file. The functions on this page operate on that output: smoothing jitter, computing skeleton bone lengths and orientations, plotting x/y trajectories, assembling multi-animal tracklets into full tracks, and exporting results to alternative formats.
+
+## Output file format
+
+All inference functions write predictions to `.h5` files using the Pandas HDFStore format under the key `"df_with_missing"`. The DataFrame has a three-level column MultiIndex:
+
+| Level | Values | Description |
+|-------|--------|-------------|
+| `scorer` | e.g. `DLC_resnet50_reachingTask…` | Model identifier |
+| `bodyparts` | e.g. `hand`, `Joystick` | Body-part name |
+| `coords` | `x`, `y`, `likelihood` | Position in pixels and confidence |
+
+For multi-animal projects a fourth level, `individuals`, is inserted between `scorer` and `bodyparts`.
+
+**Loading results in Python:**
+
+```python
+import pandas as pd
+
+df = pd.read_hdf("reachingvideo1DLC_resnet50_reachingTaskSep24shuffle1_200000.h5")
+
+# Access x-coordinates of "hand" across all frames
+x = df["DLC_resnet50_reachingTaskSep24shuffle1_200000"]["hand"]["x"]
+
+# Filter to high-confidence frames only
+pcutoff = 0.6
+confident = df.xs("likelihood", level="coords", axis=1) > pcutoff
+```
+
+---
+
+## filterpredictions
+
+Smooths raw frame-by-frame predictions using a median filter, an ARIMA model, or cubic spline interpolation. The filtered output is saved as `*_filtered.h5` (and optionally `.csv`) next to the original analysis file.
+
+```python
+import deeplabcut
+
+# Median filter with a window of 5 frames (default)
+deeplabcut.filterpredictions(
+    config="/analysis/project/reaching-task/config.yaml",
+    video=["/analysis/project/videos/reachingvideo1.avi"],
+    filtertype="median",
+    windowlength=5,
+    save_as_csv=True,
+)
+```
+
+```python
+# ARIMA model filter
+deeplabcut.filterpredictions(
+    config="/analysis/project/reaching-task/config.yaml",
+    video=["/analysis/project/videos/test.mp4"],
+    shuffle=3,
+    filtertype="arima",
+    ARdegree=5,
+    MAdegree=2,
+)
+```
+
+### Parameters
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="video" type="string | string[]" required>
+  Full path to one or more already-analyzed videos. Pass the same path (or
+  list) that was used with `analyze_videos`.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  Extension filter when `video` points to a directory.
+</ParamField>
+
+<ParamField path="shuffle" type="integer" default="1">
+  Shuffle index of the model whose output is being filtered.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="integer" default="0">
+  Index into the `TrainingFraction` list in `config.yaml`.
+</ParamField>
+
+<ParamField path="filtertype" type="string" default='"median"'>
+  Smoothing algorithm to apply. Options:
+
+  - `"median"` — Local median filter via `scipy.signal.medfilt`.
+  - `"arima"` — SARIMAX model from `statsmodels`, fitting x and y separately.
+  - `"spline"` — Cubic spline interpolation to fill gaps up to `windowlength`
+    frames.
+</ParamField>
+
+<ParamField path="windowlength" type="integer" default="5">
+  For `filtertype="median"`: half-window size (must be odd). For
+  `filtertype="spline"`: maximum gap size in frames to fill.
+</ParamField>
+
+<ParamField path="p_bound" type="float" default="0.001">
+  **`filtertype="arima"` only.** Likelihood threshold below which a body-part
+  detection is treated as missing data before fitting the SARIMAX model.
+</ParamField>
+
+<ParamField path="ARdegree" type="integer" default="3">
+  **`filtertype="arima"` only.** Autoregressive degree of the SARIMAX model.
+</ParamField>
+
+<ParamField path="MAdegree" type="integer" default="1">
+  **`filtertype="arima"` only.** Moving-average degree of the SARIMAX model.
+</ParamField>
+
+<ParamField path="alpha" type="float" default="0.01">
+  **`filtertype="arima"` only.** Significance level for detecting outliers via
+  the SARIMAX confidence interval.
+</ParamField>
+
+<ParamField path="save_as_csv" type="boolean" default="true">
+  Also write the filtered predictions to a `.csv` file.
+</ParamField>
+
+<ParamField path="destfolder" type="string | null" default="null">
+  Directory containing (and receiving) analysis data. Defaults to the video
+  directory. Must match the folder used in `analyze_videos` if overridden.
+</ParamField>
+
+<ParamField path="modelprefix" type="string" default='""'>
+  Subdirectory within the project folder containing the model weights.
+</ParamField>
+
+<ParamField path="track_method" type="string" default='""'>
+  Tracker method used during analysis (`"box"`, `"skeleton"`, or `"ellipse"`
+  for multi-animal projects). Defaults to the value in `config.yaml`.
+</ParamField>
+
+<ParamField path="return_data" type="boolean" default="false">
+  When `True`, returns the filtered DataFrames instead of only writing files.
+</ParamField>
+
+### Returns
+
+<ResponseField name="video_to_filtered_df" type="object">
+  Only returned when `return_data=True`. A dictionary mapping each video path
+  to its filtered Pandas DataFrame, or `None` if that video had not been
+  analyzed yet.
+</ResponseField>
+
+---
+
+## analyzeskeleton
+
+Computes the length and orientation of each bone defined in the `skeleton` field of `config.yaml`, for every frame of each analyzed video. Results are written to `*_skeleton.h5`.
+
+<Note>
+  A skeleton must be defined in `config.yaml` before calling this function.
+  Add pairs of connected body parts under the `skeleton` key.
+</Note>
+
+```python
+import deeplabcut
+
+deeplabcut.analyzeskeleton(
+    config="/analysis/project/reaching-task/config.yaml",
+    videos=["/analysis/project/videos/reachingvideo1.avi"],
+    filtered=True,   # use filterpredictions output
+    save_as_csv=True,
+)
+```
+
+### Parameters
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="videos" type="string[]" required>
+  List of video paths (or a directory) for which skeleton analysis should be
+  run.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  Extension filter for directory input.
+</ParamField>
+
+<ParamField path="shuffle" type="integer" default="1">
+  Shuffle index of the model whose predictions are used.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="integer" default="0">
+  Index into the `TrainingFraction` list.
+</ParamField>
+
+<ParamField path="filtered" type="boolean" default="false">
+  When `True`, reads from the `*_filtered.h5` output of `filterpredictions`
+  rather than the raw predictions.
+</ParamField>
+
+<ParamField path="save_as_csv" type="boolean" default="false">
+  Also write skeleton results to a `.csv` file.
+</ParamField>
+
+<ParamField path="destfolder" type="string | null" default="null">
+  Directory containing analysis files. Must match the folder used in
+  `analyze_videos`.
+</ParamField>
+
+<ParamField path="modelprefix" type="string" default='""'>
+  Subdirectory within the project folder containing the model weights.
+</ParamField>
+
+<ParamField path="track_method" type="string" default='""'>
+  Tracker method for multi-animal projects.
+</ParamField>
+
+<ParamField path="return_data" type="boolean" default="false">
+  When `True`, returns the skeleton DataFrames.
+</ParamField>
+
+### Returns
+
+<ResponseField name="video_to_skeleton_df" type="object">
+  Only returned when `return_data=True`. Maps each video path to a Pandas
+  DataFrame with a two-level column index: bone name (e.g. `"hand_Joystick"`)
+  and metric (`"length"`, `"orientation"`, `"likelihood"`).
+</ResponseField>
+
+---
+
+## plot\_trajectories
+
+Generates trajectory plots (x/y position over time, histograms, likelihoods) for the body parts in one or more analyzed videos and saves them as image files.
+
+```python
+import deeplabcut
+
+deeplabcut.plot_trajectories(
+    config="/analysis/project/reaching-task/config.yaml",
+    videos=["/analysis/project/videos/reachingvideo1.avi"],
+    displayedbodyparts=["hand", "Joystick"],
+    filtered=True,
+    imagetype=".png",
+    resolution=150,
+)
+```
+
+### Parameters
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="videos" type="string[]" required>
+  List of video paths or a directory.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  Extension filter for directory input.
+</ParamField>
+
+<ParamField path="shuffle" type="integer" default="1">
+  Shuffle index of the model whose predictions to plot.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="integer" default="0">
+  Index into the `TrainingFraction` list.
+</ParamField>
+
+<ParamField path="filtered" type="boolean" default="false">
+  When `True`, plots the filtered predictions from `filterpredictions`.
+</ParamField>
+
+<ParamField path="displayedbodyparts" type="string | string[]" default='"all"'>
+  Body parts to include in the trajectory plots. Either `"all"` or a subset
+  list of body-part names.
+</ParamField>
+
+<ParamField path="displayedindividuals" type="string | string[]" default='"all"'>
+  **Multi-animal projects only.** Individuals to include.
+</ParamField>
+
+<ParamField path="showfigures" type="boolean" default="false">
+  When `True`, opens plot windows interactively in addition to saving them.
+</ParamField>
+
+<ParamField path="destfolder" type="string | null" default="null">
+  Directory containing analysis files. Plot images are written to a
+  `plot-poses/{video_stem}` subfolder inside this directory.
+</ParamField>
+
+<ParamField path="modelprefix" type="string" default='""'>
+  Subdirectory within the project folder containing the model weights.
+</ParamField>
+
+<ParamField path="imagetype" type="string" default='".png"'>
+  Output image format. Options: `".png"`, `".jpg"`, `".svg"`, `".tif"`.
+</ParamField>
+
+<ParamField path="resolution" type="integer" default="100">
+  Output resolution in DPI. Higher values produce larger, slower-to-generate
+  files.
+</ParamField>
+
+<ParamField path="linewidth" type="float" default="1.0">
+  Line width for trajectory and histogram plots.
+</ParamField>
+
+<ParamField path="track_method" type="string" default='""'>
+  Tracker method for multi-animal projects.
+</ParamField>
+
+<ParamField path="pcutoff" type="float | null" default="null">
+  Override the project-level `pcutoff` when deciding which detections to
+  include in the plots.
+</ParamField>
+
+---
+
+## convert\_detections2tracklets
+
+Converts the raw per-frame detections from a multi-animal inference run into short, consistent tracklets. This is the first step of manual multi-animal post-processing when `auto_track=False` was used in `analyze_videos`.
+
+```python
+import deeplabcut
+
+deeplabcut.convert_detections2tracklets(
+    config="/analysis/project/maDLC-task/config.yaml",
+    videos=["/analysis/project/videos/session1.mp4"],
+    videotype=".mp4",
+    track_method="box",
+    shuffle=1,
+)
+```
+
+### Parameters
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="videos" type="string[]" required>
+  List of video paths or a directory.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  Extension filter for directory input.
+</ParamField>
+
+<ParamField path="shuffle" type="integer" default="1">
+  Shuffle index of the model whose detections to process.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="integer" default="0">
+  Index into the `TrainingFraction` list.
+</ParamField>
+
+<ParamField path="overwrite" type="boolean" default="false">
+  Re-compute tracklets and overwrite any existing tracklet files.
+</ParamField>
+
+<ParamField path="destfolder" type="string | null" default="null">
+  Directory containing analysis files.
+</ParamField>
+
+<ParamField path="ignore_bodyparts" type="string[] | null" default="null">
+  Body-part names to exclude from tracking. By default all parts are used.
+</ParamField>
+
+<ParamField path="inferencecfg" type="object | null" default="null">
+  Configuration overrides for the assembly algorithm. When `None`, values are
+  read from `inference_cfg.yaml`. Ideally obtained via cross-validation.
+</ParamField>
+
+<ParamField path="identity_only" type="boolean" default="false">
+  When `True`, assembly and tracking rely exclusively on identity predictions
+  from the model.
+</ParamField>
+
+<ParamField path="calibrate" type="boolean" default="false">
+  **TensorFlow engine only.** Use training data to calibrate the assembly
+  procedure.
+</ParamField>
+
+<ParamField path="window_size" type="integer" default="0">
+  **TensorFlow engine only.** Number of past frames to use for temporal
+  coherence in assembly. `0` disables the temporal cost term.
+</ParamField>
+
+<ParamField path="track_method" type="string" default='""'>
+  Tracker to use: `"box"`, `"skeleton"`, or `"ellipse"`. Defaults to the
+  value in `config.yaml`.
+</ParamField>
+
+<ParamField path="modelprefix" type="string" default='""'>
+  Subdirectory within the project folder containing the model weights.
+</ParamField>
+
+---
+
+## stitch\_tracklets
+
+Assembles the sparse tracklets produced by `convert_detections2tracklets` into complete per-individual tracks using a graph-based minimum-cost flow solver.
+
+```python
+import deeplabcut
+
+deeplabcut.stitch_tracklets(
+    config_path="/analysis/project/maDLC-task/config.yaml",
+    videos=["/analysis/project/videos/session1.mp4"],
+    n_tracks=3,
+    min_length=10,
+    track_method="box",
+    save_as_csv=True,
+)
+```
+
+### Parameters
+
+<ParamField path="config_path" type="string" required>
+  Path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="videos" type="string[]" required>
+  List of video paths or a directory.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  Extension filter for directory input.
+</ParamField>
+
+<ParamField path="shuffle" type="integer" default="1">
+  Shuffle index of the model whose tracklets to stitch.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="integer" default="0">
+  Index into the `TrainingFraction` list.
+</ParamField>
+
+<ParamField path="n_tracks" type="integer | null" default="null">
+  Number of final tracks to reconstruct. Defaults to the number of
+  `individuals` in `config.yaml`. Override when the video contains a different
+  number of animals.
+</ParamField>
+
+<ParamField path="animal_names" type="string[]" default="null">
+  Names assigned to each reconstructed track. If provided and `n_tracks` is
+  `None`, `n_tracks` is set to `len(animal_names)`.
+</ParamField>
+
+<ParamField path="min_length" type="integer" default="10">
+  Tracklets shorter than this many frames are treated as residuals and attached
+  to the nearest complete track after the main optimization. Must be at least
+  3. Higher values reduce computation but may discard useful tracklets.
+</ParamField>
+
+<ParamField path="split_tracklets" type="boolean" default="true">
+  When `True`, tracklets with non-consecutive time indices are split into
+  shorter continuous segments before stitching. Disable only when long
+  occlusions are expected and the tracker's re-identification is reliable.
+</ParamField>
+
+<ParamField path="prestitch_residuals" type="boolean" default="true">
+  Group residual tracklets by temporal proximity before attaching them to
+  complete tracks.
+</ParamField>
+
+<ParamField path="max_gap" type="integer | null" default="null">
+  Maximum temporal gap (frames) allowed between a pair of tracklets to be
+  candidates for stitching. Determined automatically when `None`.
+</ParamField>
+
+<ParamField path="weight_func" type="callable | null" default="null">
+  Custom edge-weight function accepting two `Tracklet` objects and returning a
+  scalar. Lower values indicate that the two tracklets are more likely to
+  belong to the same animal.
+</ParamField>
+
+<ParamField path="destfolder" type="string | null" default="null">
+  Directory containing tracklet files.
+</ParamField>
+
+<ParamField path="track_method" type="string" default='""'>
+  Tracker method: `"box"`, `"skeleton"`, or `"ellipse"`.
+</ParamField>
+
+<ParamField path="output_name" type="string" default='""'>
+  Custom name for the output `.h5` file. Defaults to the tracklet file name.
+</ParamField>
+
+<ParamField path="save_as_csv" type="boolean" default="false">
+  Also write the stitched tracks to a `.csv` file.
+</ParamField>
+
+### Returns
+
+<ResponseField name="stitcher" type="TrackletStitcher">
+  A `TrackletStitcher` object containing the solved tracks and intermediate
+  graph data. The final tracks are also written to disk as an `.h5` file.
+</ResponseField>
+
+---
+
+## analyze\_videos\_converth5\_to\_csv
+
+Converts all HDF5 pose-output files in a folder to CSV format. Useful for loading results in MATLAB, R, or Prism.
+
+```python
+import deeplabcut
+
+deeplabcut.analyze_videos_converth5_to_csv(
+    video_folder="/media/alex/experimentaldata/cheetahvideos",
+    videotype=".mp4",
+)
+```
+
+### Parameters
+
+<ParamField path="video_folder" type="string" required>
+  Absolute path to a folder containing both the video files and their
+  corresponding `.h5` analysis files.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='".mp4"'>
+  File extension of the videos in the folder. Used to match each video to its
+  corresponding `.h5` file.
+</ParamField>
+
+---
+
+## analyze\_videos\_converth5\_to\_nwb
+
+Converts all HDF5 pose-output files in a folder to [Neurodata Without Borders (NWB)](https://www.nwb.org/) format using the `dlc2nwb` package.
+
+<Warning>
+  Requires the optional `dlc2nwb` package:
+  ```bash
+  pip install dlc2nwb
+  ```
+</Warning>
+
+```python
+import deeplabcut
+
+deeplabcut.analyze_videos_converth5_to_nwb(
+    config="/analysis/project/reaching-task/config.yaml",
+    video_folder="/media/alex/experimentaldata/cheetahvideos",
+    videotype=".mp4",
+)
+```
+
+### Parameters
+
+<ParamField path="config" type="string" required>
+  Absolute path to the project `config.yaml` file. Used to populate NWB
+  metadata fields.
+</ParamField>
+
+<ParamField path="video_folder" type="string" required>
+  Absolute path to a folder containing both the video files and their
+  corresponding `.h5` analysis files.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='".mp4"'>
+  File extension of the videos to screen.
+</ParamField>

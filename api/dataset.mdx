@@ -1,0 +1,693 @@
+---
+title: "Dataset and labeling API — frames, labels, and splits"
+description: "Functions for extracting representative frames, annotating keypoints, building training datasets, and refining labels after an initial training round."
+---
+
+Building a DeepLabCut training dataset involves four sequential stages: extracting a diverse set of frames from your videos, labeling keypoints in those frames, compiling the annotations into a training split, and—after an initial training cycle—correcting any incorrect predictions and merging the refined data back into the dataset. The functions below cover each stage.
+
+---
+
+## extract\_frames
+
+Selects and saves representative frames from every video registered in the project. Frames can be chosen automatically using k-means clustering or uniform sampling, or picked manually through the napari GUI.
+
+```python
+deeplabcut.extract_frames(
+    config,
+    mode="automatic",
+    algo="kmeans",
+    crop=False,
+    userfeedback=True,
+    cluster_step=1,
+    cluster_resizewidth=30,
+    cluster_color=False,
+    opencv=True,
+    slider_width=25,
+    config3d=None,
+    extracted_cam=0,
+    videos_list=None,
+)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="mode" type="string" default='"automatic"'>
+  Frame selection strategy. Options:
+
+  - `"automatic"` — selects frames algorithmically (see `algo`).
+  - `"manual"` — opens the napari GUI so you can scrub the video and pick frames.
+  - `"match"` — extracts frames from a second camera that correspond frame-for-frame to frames already extracted from the first camera. Requires `config3d`.
+</ParamField>
+
+<ParamField path="algo" type="string" default='"kmeans"'>
+  Algorithm used in `mode="automatic"`. Either `"kmeans"` (visual diversity via clustering on downsampled frames) or `"uniform"` (temporally uniform sampling). Ignored in `"manual"` and `"match"` modes.
+</ParamField>
+
+<ParamField path="crop" type="boolean or string" default="False">
+  Controls frame cropping. `False` — no cropping. `True` — crop using the coordinates already stored in `config.yaml`. `"GUI"` — open an interactive bounding-box selector before extraction.
+</ParamField>
+
+<ParamField path="userfeedback" type="boolean" default="True">
+  When `True`, the function pauses before each video and asks whether to extract frames from it. Set to `False` to process all videos without prompts (useful in scripts).
+</ParamField>
+
+<ParamField path="cluster_step" type="integer" default="1">
+  For `algo="kmeans"`: use every `n`-th frame when building the clustering input. Increasing this value reduces memory usage for long videos at the cost of longer read times.
+</ParamField>
+
+<ParamField path="cluster_resizewidth" type="integer" default="30">
+  For `algo="kmeans"`: width in pixels to which frames are downsampled before clustering. Aspect ratio is preserved.
+</ParamField>
+
+<ParamField path="cluster_color" type="boolean" default="False">
+  For `algo="kmeans"`: when `False` (default) frames are treated as grayscale vectors. Set to `True` to include color channel information, which increases computational cost but may improve cluster quality for colorful scenes (e.g. camouflaged animals).
+</ParamField>
+
+<ParamField path="opencv" type="boolean" default="True">
+  Use OpenCV for video loading and frame extraction. Set to `False` to fall back to the legacy MoviePy backend.
+</ParamField>
+
+<ParamField path="slider_width" type="integer" default="25">
+  For `mode="manual"`: width of the video scrubber as a percentage of the window width.
+</ParamField>
+
+<ParamField path="config3d" type="string" default="None">
+  For `mode="match"`: full path to the 3D project `config.yaml`. Provides the list of camera names and their correspondence.
+</ParamField>
+
+<ParamField path="extracted_cam" type="integer" default="0">
+  For `mode="match"`: zero-based index of the camera whose frames have already been extracted. Frames at the same timestamps are extracted from all other cameras.
+</ParamField>
+
+<ParamField path="videos_list" type="list[string]" default="None">
+  Restrict extraction to a subset of videos. When `None` all videos listed in `config.yaml` are processed.
+</ParamField>
+
+### Examples
+
+```python
+import deeplabcut
+
+config = "/analysis/project/reaching-task/config.yaml"
+
+# Automatic k-means extraction with cropping
+deeplabcut.extract_frames(config, mode="automatic", algo="kmeans", crop=True)
+
+# Automatic k-means extraction with interactive crop selection
+deeplabcut.extract_frames(config, mode="automatic", algo="kmeans", crop="GUI")
+
+# Uniform extraction without prompts (useful in notebooks)
+deeplabcut.extract_frames(
+    config,
+    mode="automatic",
+    algo="uniform",
+    userfeedback=False,
+)
+
+# Include color information in k-means clustering
+deeplabcut.extract_frames(config, algo="kmeans", cluster_color=True)
+
+# Manual frame selection via napari GUI
+deeplabcut.extract_frames(config, mode="manual")
+
+# Wider scrubber slider in manual mode
+deeplabcut.extract_frames(config, mode="manual", slider_width=60)
+
+# Extract matched frames from a second camera (for 3D projects)
+deeplabcut.extract_frames(config, mode="match", extracted_cam=0)
+```
+
+---
+
+## label\_frames
+
+Opens the [napari-deeplabcut](https://github.com/DeepLabCut/napari-deeplabcut) annotation GUI so you can place keypoint labels on the extracted frames.
+
+<Note>
+  This function requires the optional GUI dependencies. Install them with `pip install "deeplabcut[gui]"`.
+</Note>
+
+```python
+deeplabcut.label_frames(
+    config_path=None,
+    image_folder=None,
+)
+```
+
+<ParamField path="config_path" type="string or Path" default="None">
+  Full path to the project `config.yaml` file. When `None` the GUI opens without pre-loading any folder; you can then drag-and-drop your `labeled-data/<video>` folder into the napari window.
+</ParamField>
+
+<ParamField path="image_folder" type="string" default="None">
+  Name (not full path) of the image sub-folder to open, relative to `labeled-data/`. When `None` and `config_path` is given, the first folder in `labeled-data/` (alphabetical order) is opened. Must be `None` when `config_path` is `None`.
+</ParamField>
+
+### Examples
+
+```python
+import deeplabcut
+
+# Open napari without pre-loading a folder
+deeplabcut.label_frames()
+
+# Open the first extracted image folder for a project
+deeplabcut.label_frames("/users/john/project/config.yaml")
+
+# Open a specific image folder (Windows)
+deeplabcut.label_frames(
+    r"C:\myproject\reaching-task\config.yaml",
+    "2025-01-01-experiment7",
+)
+```
+
+---
+
+## check\_labels
+
+Renders all labeled frames as PNG images with the keypoints and skeleton overlaid, saving them in a `<video_name>_labeled/` sub-directory inside `labeled-data/`. Inspect these images to verify that labels are correctly placed before creating a training dataset.
+
+```python
+deeplabcut.check_labels(
+    config,
+    Labels=None,
+    scale=1,
+    dpi=100,
+    draw_skeleton=True,
+    visualizeindividuals=True,
+)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="Labels" type="list[string]" default='["+", ".", "x"]'>
+  List of at least three matplotlib marker strings. The first marker is used to draw the ground-truth keypoint positions.
+</ParamField>
+
+<ParamField path="scale" type="float" default="1">
+  Relative scale factor for the output images. Values greater than 1 produce larger images.
+</ParamField>
+
+<ParamField path="dpi" type="integer" default="100">
+  Output image resolution in dots per inch.
+</ParamField>
+
+<ParamField path="draw_skeleton" type="boolean" default="True">
+  When `True` the skeleton connections defined in `config.yaml` are drawn over the keypoints.
+</ParamField>
+
+<ParamField path="visualizeindividuals" type="boolean" default="True">
+  Multi-animal projects only. When `True` each individual is assigned a distinct color. When `False` colors vary by body part instead.
+</ParamField>
+
+### Example
+
+```python
+import deeplabcut
+
+deeplabcut.check_labels("/analysis/project/reaching-task/config.yaml")
+```
+
+---
+
+## create\_training\_dataset
+
+Merges all annotation files across videos into a single `.h5` file, splits the data into train and test sets, and writes the per-engine training configuration files (`pose_cfg.yaml` or `pytorch_config.yaml`). For multi-animal projects this function delegates automatically to `create_multianimaltraining_dataset`.
+
+```python
+deeplabcut.create_training_dataset(
+    config,
+    num_shuffles=1,
+    Shuffles=None,
+    windows2linux=False,
+    userfeedback=True,
+    trainIndices=None,
+    testIndices=None,
+    net_type=None,
+    detector_type=None,
+    augmenter_type=None,
+    posecfg_template=None,
+    superanimal_name="",
+    weight_init=None,
+    engine=None,
+    ctd_conditions=None,
+)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="num_shuffles" type="integer" default="1">
+  Number of independent train/test splits to create. Each shuffle produces its own model directory.
+</ParamField>
+
+<ParamField path="Shuffles" type="list[integer]" default="None">
+  Explicit list of shuffle indices to create (e.g. `[3, 17, 5]`). Takes precedence over `num_shuffles` when provided.
+</ParamField>
+
+<ParamField path="userfeedback" type="boolean" default="True">
+  When `True`, prompts for confirmation before overwriting an existing shuffle. Set to `False` to overwrite silently.
+</ParamField>
+
+<ParamField path="trainIndices" type="list[list[integer]]" default="None">
+  Pre-computed training indices to use instead of random splitting. Must be provided together with `testIndices`.
+</ParamField>
+
+<ParamField path="testIndices" type="list[list[integer]]" default="None">
+  Pre-computed test indices corresponding to `trainIndices`.
+</ParamField>
+
+<ParamField path="net_type" type="string" default="None">
+  Network architecture. Defaults to `default_net_type` from `config.yaml`. Common PyTorch options include `"hrnet_w32"`, `"resnet_50"`, `"rtmpose_m"`. Prepend `"top_down_"` for top-down models. TensorFlow options include `"resnet_50"`, `"resnet_101"`, `"efficientnet-b0"` through `"efficientnet-b6"`.
+</ParamField>
+
+<ParamField path="detector_type" type="string" default="None">
+  PyTorch engine only — detector for top-down models. Options: `"ssdlite"`, `"fasterrcnn_mobilenet_v3_large_fpn"`, `"fasterrcnn_resnet50_fpn_v2"`. Defaults to `"ssdlite"`.
+</ParamField>
+
+<ParamField path="augmenter_type" type="string" default="None">
+  Data augmentation pipeline. TensorFlow options: `"default"`, `"scalecrop"`, `"imgaug"`, `"tensorpack"`, `"deterministic"`. PyTorch option: `"albumentations"`.
+</ParamField>
+
+<ParamField path="posecfg_template" type="string" default="None">
+  TensorFlow engine only. Path to an existing `pose_cfg.yaml` to use as the template for the new training config.
+</ParamField>
+
+<ParamField path="weight_init" type="WeightInitialization" default="None">
+  PyTorch engine only. Controls how model weights are initialized. The default (`None`) uses ImageNet transfer learning. Use `deeplabcut.modelzoo.build_weight_init()` for SuperAnimal transfer learning.
+</ParamField>
+
+<ParamField path="engine" type="Engine" default="None">
+  Backend engine (`Engine.PYTORCH` or `Engine.TF`). Defaults to the engine specified in `config.yaml`, falling back to `Engine.PYTORCH`.
+</ParamField>
+
+<ParamField path="ctd_conditions" type="integer or string or Path or tuple" default="None">
+  Required when using a conditional top-down (`ctd_*`) network. Specifies the bottom-up shuffle number, a predictions file path, or a `(shuffle, snapshot)` tuple to use as conditions.
+</ParamField>
+
+<ResponseField name="splits" type="list[tuple] or None">
+  A list of `(train_fraction, shuffle_index, train_indices, test_indices)` tuples describing each created split. Returns `None` if creation failed.
+</ResponseField>
+
+### Examples
+
+```python
+import deeplabcut
+
+config = "/analysis/project/reaching-task/config.yaml"
+
+# Create one default shuffle
+deeplabcut.create_training_dataset(config, num_shuffles=1)
+
+# Create a specific shuffle with TensorFlow backend
+deeplabcut.create_training_dataset(
+    config,
+    Shuffles=[2],
+    engine=deeplabcut.Engine.TF,
+)
+
+# Create multiple shuffles (Windows)
+deeplabcut.create_training_dataset(
+    r"C:\Users\Ulf\looming-task\config.yaml",
+    Shuffles=[3, 17, 5],
+)
+
+# Freeze a specific train/test split across two model instances
+train_inds, test_inds = deeplabcut.mergeandsplit(config, trainindex=0, uniform=True)
+deeplabcut.create_training_dataset(
+    config,
+    Shuffles=[0, 1],
+    trainIndices=[train_inds, train_inds],
+    testIndices=[test_inds, test_inds],
+)
+```
+
+---
+
+## create\_multianimaltraining\_dataset
+
+Creates a training dataset for multi-animal projects. Functionally equivalent to `create_training_dataset` for projects where `multianimalproject: true` in `config.yaml`, but exposes additional multi-animal-specific parameters.
+
+<Note>
+  `create_training_dataset` calls this function automatically for multi-animal projects. You generally do not need to call it directly.
+</Note>
+
+```python
+deeplabcut.create_multianimaltraining_dataset(
+    config,
+    num_shuffles=1,
+    Shuffles=None,
+    net_type=None,
+    detector_type=None,
+    numdigits=2,
+    crop_size=(400, 400),
+    crop_sampling="hybrid",
+    paf_graph=None,
+    trainIndices=None,
+    testIndices=None,
+    n_edges_threshold=105,
+    paf_graph_degree=6,
+    userfeedback=True,
+    weight_init=None,
+    engine=None,
+    ctd_conditions=None,
+)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="num_shuffles" type="integer" default="1">
+  Number of train/test splits to create.
+</ParamField>
+
+<ParamField path="Shuffles" type="list[integer]" default="None">
+  Explicit list of shuffle indices. Overrides `num_shuffles`.
+</ParamField>
+
+<ParamField path="net_type" type="string" default="None">
+  Network architecture. Defaults to `default_net_type` from `config.yaml`. Multi-animal-specific options include `"dlcrnet_stride16_ms5"`, `"dlcrnet_stride32_ms5"`, `"dekr_w32"`, `"dekr_w48"`.
+</ParamField>
+
+<ParamField path="detector_type" type="string" default="None">
+  PyTorch engine only. Detector for top-down models.
+</ParamField>
+
+<ParamField path="numdigits" type="integer" default="2">
+  Decimal precision used when storing keypoint coordinates.
+</ParamField>
+
+<ParamField path="crop_size" type="tuple[integer, integer]" default="(400, 400)">
+  TensorFlow engine only. `(width, height)` of crops used in data augmentation.
+</ParamField>
+
+<ParamField path="crop_sampling" type="string" default='"hybrid"'>
+  TensorFlow engine only. Crop center sampling strategy: `"uniform"`, `"keypoints"`, `"density"`, or `"hybrid"`.
+</ParamField>
+
+<ParamField path="paf_graph" type='list[list[integer]] or "config"' default="None">
+  TensorFlow engine only. Part Affinity Field (PAF) graph as a list of `[joint_a, joint_b]` index pairs. Pass `"config"` to derive the graph from the `skeleton` in `config.yaml`. When `None` a complete graph is built and automatically pruned when it exceeds `n_edges_threshold` edges.
+</ParamField>
+
+<ParamField path="trainIndices" type="list[list[integer]]" default="None">
+  Pre-computed training index lists.
+</ParamField>
+
+<ParamField path="testIndices" type="list[list[integer]]" default="None">
+  Pre-computed test index lists.
+</ParamField>
+
+<ParamField path="n_edges_threshold" type="integer" default="105">
+  TensorFlow engine only. PAF graphs with more edges than this threshold are automatically pruned.
+</ParamField>
+
+<ParamField path="paf_graph_degree" type="integer" default="6">
+  TensorFlow engine only. Target average node degree after automatic graph pruning.
+</ParamField>
+
+<ParamField path="userfeedback" type="boolean" default="True">
+  Prompt before overwriting existing shuffles.
+</ParamField>
+
+<ParamField path="weight_init" type="WeightInitialization" default="None">
+  PyTorch engine only. Weight initialization strategy.
+</ParamField>
+
+<ParamField path="engine" type="Engine" default="None">
+  Backend engine. Defaults to the engine specified in `config.yaml`.
+</ParamField>
+
+<ParamField path="ctd_conditions" type="integer or string or Path or tuple" default="None">
+  Conditions for conditional top-down (`ctd_*`) networks.
+</ParamField>
+
+### Examples
+
+```python
+import deeplabcut
+
+config = "/analysis/project/reaching-task/config.yaml"
+
+# Default single shuffle
+deeplabcut.create_multianimaltraining_dataset(config, num_shuffles=1)
+
+# Pre-computed splits for three shuffles
+deeplabcut.create_multianimaltraining_dataset(
+    config,
+    Shuffles=[0, 1, 2],
+    trainIndices=[trainInd1, trainInd2, trainInd3],
+    testIndices=[testInd1, testInd2, testInd3],
+)
+```
+
+---
+
+## extract\_outlier\_frames
+
+After an initial training run, analyzes the network's predictions on new videos to identify frames where the model performed poorly ("outlier frames"). These frames are extracted and added to `labeled-data/` so they can be corrected with `refine_labels` and incorporated into the next training iteration.
+
+```python
+deeplabcut.extract_outlier_frames(
+    config,
+    videos,
+    videotype="",
+    shuffle=1,
+    trainingsetindex=0,
+    outlieralgorithm="jump",
+    frames2use=None,
+    comparisonbodyparts="all",
+    epsilon=20,
+    p_bound=0.01,
+    ARdegree=3,
+    MAdegree=1,
+    alpha=0.01,
+    extractionalgorithm="kmeans",
+    automatic=False,
+    cluster_resizewidth=30,
+    cluster_color=False,
+    opencv=True,
+    savelabeled=False,
+    copy_videos=False,
+    destfolder=None,
+    modelprefix="",
+    track_method="",
+)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="videos" type="list[string]" required>
+  Full paths to video files, or a directory path containing videos of the specified `videotype`.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  Extension filter when `videos` is a directory. Common extensions: `"avi"`, `"mp4"`, `"mov"`. Defaults to accepting all common video formats.
+</ParamField>
+
+<ParamField path="shuffle" type="integer" default="1">
+  Shuffle index of the model to use for predictions.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="integer" default="0">
+  Index into `TrainingFraction` list in `config.yaml` that identifies which training fraction was used.
+</ParamField>
+
+<ParamField path="outlieralgorithm" type="string" default='"jump"'>
+  Algorithm for identifying outlier frames:
+
+  - `"jump"` — flags frames where any body part moves more than `epsilon` pixels between consecutive frames.
+  - `"fitting"` — fits an ARIMA model to each body part trajectory and flags frames that deviate by more than `epsilon` pixels from the fitted curve.
+  - `"uncertain"` — flags frames where any body part has likelihood below `p_bound`.
+  - `"manual"` — opens the napari GUI for manual selection.
+  - `"list"` — use the explicit list of frame indices provided in `frames2use`.
+</ParamField>
+
+<ParamField path="frames2use" type="list[integer]" default="None">
+  Required when `outlieralgorithm="list"`. List of frame indices to extract.
+</ParamField>
+
+<ParamField path="comparisonbodyparts" type='list[string] or "all"' default='"all"'>
+  Body parts to consider when scoring frames. `"all"` uses every body part in `config.yaml`. Pass a list of names (e.g. `["hand", "Joystick"]`) to restrict the comparison.
+</ParamField>
+
+<ParamField path="epsilon" type="float" default="20">
+  Pixel threshold for `"jump"` (inter-frame displacement) and `"fitting"` (deviation from model fit) algorithms.
+</ParamField>
+
+<ParamField path="p_bound" type="float" default="0.01">
+  Likelihood threshold for the `"uncertain"` algorithm. Frames with any body part below this value are flagged.
+</ParamField>
+
+<ParamField path="ARdegree" type="integer" default="3">
+  Autoregressive degree of the ARIMA model used by the `"fitting"` algorithm.
+</ParamField>
+
+<ParamField path="MAdegree" type="integer" default="1">
+  Moving average degree of the ARIMA model used by the `"fitting"` algorithm.
+</ParamField>
+
+<ParamField path="alpha" type="float" default="0.01">
+  Significance level for the ARIMA confidence interval used by the `"fitting"` algorithm.
+</ParamField>
+
+<ParamField path="extractionalgorithm" type="string" default='"kmeans"'>
+  Algorithm used to sub-select frames from the identified outlier candidates: `"kmeans"` or `"uniform"`.
+</ParamField>
+
+<ParamField path="automatic" type="boolean" default="False">
+  Skip user confirmation and extract frames automatically.
+</ParamField>
+
+<ParamField path="cluster_resizewidth" type="integer" default="30">
+  For `extractionalgorithm="kmeans"`: width in pixels to which frames are resized before clustering.
+</ParamField>
+
+<ParamField path="cluster_color" type="boolean" default="False">
+  For `extractionalgorithm="kmeans"`: include color channels when clustering.
+</ParamField>
+
+<ParamField path="opencv" type="boolean" default="True">
+  Use OpenCV for video reading.
+</ParamField>
+
+<ParamField path="savelabeled" type="boolean" default="False">
+  When `True`, each extracted frame is also saved with the model's predicted labels overlaid.
+</ParamField>
+
+<ParamField path="copy_videos" type="boolean" default="False">
+  When `True`, newly added videos are copied to the project rather than symlinked.
+</ParamField>
+
+<ParamField path="destfolder" type="string" default="None">
+  Directory containing the analysis `.h5` files. Defaults to the same directory as each video.
+</ParamField>
+
+<ParamField path="modelprefix" type="string" default='""'>
+  Directory prefix for finding model files when models are stored outside the project folder.
+</ParamField>
+
+<ParamField path="track_method" type="string" default='""'>
+  Tracker used to generate the data (`"box"`, `"skeleton"`, or `"ellipse"`). Empty string for single-animal projects.
+</ParamField>
+
+### Examples
+
+```python
+import deeplabcut
+
+config = "/analysis/project/reaching-task/config.yaml"
+
+# Jump-based outlier detection on Linux/macOS
+deeplabcut.extract_outlier_frames(
+    config,
+    ["/analysis/project/video/reachingvideo1.avi"],
+)
+
+# K-means extraction with smaller epsilon
+deeplabcut.extract_outlier_frames(
+    config,
+    ["/analysis/project/video/reachingvideo1.avi"],
+    epsilon=5,
+    extractionalgorithm="kmeans",
+)
+
+# Windows — extract automatically without prompts
+deeplabcut.extract_outlier_frames(
+    r"C:\myproject\reaching-task\config.yaml",
+    [r"C:\yourusername\rig-95\Videos\reachingvideo1.avi"],
+    automatic=True,
+)
+```
+
+---
+
+## merge\_datasets
+
+Checks that every folder in `labeled-data/` has been manually reviewed (contains either a `MachineLabelsRefine.h5` or a `CollectedData_<scorer>.h5` file), then advances the project's `iteration` counter in `config.yaml`. After merging you can call `create_training_dataset` to build a new, expanded training split.
+
+```python
+deeplabcut.merge_datasets(config, forceiterate=None)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="forceiterate" type="integer" default="None">
+  When provided, sets the `iteration` key to this exact value rather than incrementing by 1. Only applied if all labeled-data folders have been reviewed.
+</ParamField>
+
+### Example
+
+```python
+import deeplabcut
+
+deeplabcut.merge_datasets("/analysis/project/reaching-task/config.yaml")
+```
+
+After merging, create an updated training dataset:
+
+```python
+deeplabcut.create_training_dataset(
+    "/analysis/project/reaching-task/config.yaml",
+    num_shuffles=1,
+)
+```
+
+---
+
+## refine\_labels
+
+Opens the [napari-deeplabcut](https://github.com/DeepLabCut/napari-deeplabcut) GUI pre-loaded with the outlier frames extracted by `extract_outlier_frames`. Use it to correct the model's predictions and save the refined annotations.
+
+<Note>
+  `refine_labels` is an alias for `label_frames`. Both functions open the same napari-deeplabcut interface. This function requires the optional GUI dependencies (`pip install "deeplabcut[gui]"`).
+</Note>
+
+```python
+deeplabcut.refine_labels(
+    config_path=None,
+    image_folder=None,
+)
+```
+
+<ParamField path="config_path" type="string or Path" default="None">
+  Full path to the project `config.yaml` file. When `None` the GUI opens without pre-loading a folder.
+</ParamField>
+
+<ParamField path="image_folder" type="string" default="None">
+  Name of the image sub-folder inside `labeled-data/` to open. When `None` and `config_path` is set, the first folder alphabetically is opened.
+</ParamField>
+
+### Example
+
+```python
+import deeplabcut
+
+# Open the first labeled-data folder for refinement
+deeplabcut.refine_labels("/analysis/project/reaching-task/config.yaml")
+
+# Open a specific outlier frame folder
+deeplabcut.refine_labels(
+    "/analysis/project/reaching-task/config.yaml",
+    "reachingvideo1",
+)
+```
+
+After correcting all outlier frames, merge the refined data and retrain:
+
+```python
+deeplabcut.merge_datasets("/analysis/project/reaching-task/config.yaml")
+deeplabcut.create_training_dataset(
+    "/analysis/project/reaching-task/config.yaml",
+    num_shuffles=1,
+)
+deeplabcut.train_network("/analysis/project/reaching-task/config.yaml")
+```

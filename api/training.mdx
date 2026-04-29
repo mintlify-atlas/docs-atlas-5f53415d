@@ -1,0 +1,368 @@
+---
+title: "Training API — train_network and configuration"
+description: "Train DeepLabCut pose estimation models with the PyTorch or TensorFlow engine, manage snapshots, and export models for live inference."
+---
+
+DeepLabCut exposes a single `train_network` entry point that dispatches to the PyTorch or TensorFlow backend depending on how the shuffle was created. All functions are importable directly from the top-level `deeplabcut` package. The PyTorch engine (default since DeepLabCut 3.0) trains for a number of **epochs** rather than iterations — one epoch is a single pass over every training image.
+
+---
+
+## Engine enum
+
+The `Engine` enum controls which deep-learning backend is used. You rarely need to pass it explicitly; DeepLabCut reads the correct engine from the shuffle metadata automatically.
+
+```python
+from deeplabcut.core.engine import Engine
+
+Engine.PYTORCH   # PyTorch backend (default)
+Engine.TF        # TensorFlow backend
+```
+
+| Value | Aliases | Model folder | Config file |
+|-------|---------|-------------|-------------|
+| `Engine.PYTORCH` | `"pytorch"`, `"torch"` | `dlc-models-pytorch/` | `pytorch_config.yaml` |
+| `Engine.TF` | `"tensorflow"`, `"tf"` | `dlc-models/` | `pose_cfg.yaml` |
+
+<Note>
+When you create a training dataset, the engine is recorded in the shuffle metadata. Passing `engine=` explicitly overrides that record and is not recommended for normal use.
+</Note>
+
+---
+
+## train_network
+
+Trains the network with the labels in the training dataset. Results are saved as snapshot files in the model folder for the selected shuffle.
+
+```python
+import deeplabcut
+
+deeplabcut.train_network(config, shuffle=1, trainingsetindex=0, ...)
+```
+
+### Parameters
+
+<ParamField path="config" type="str | Path" required>
+  Full path to the project's `config.yaml` file.
+</ParamField>
+
+<ParamField path="shuffle" type="int" default="1">
+  Index of the shuffle to train. Created with `create_training_dataset` or `create_training_model_comparison`.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="int" default="0">
+  Which entry in the `TrainingFraction` list (defined in `config.yaml`) to use for training.
+</ParamField>
+
+<ParamField path="max_snapshots_to_keep" type="int | None" default="None">
+  Maximum number of snapshot files to keep on disk. Older snapshots are deleted as new ones are saved. Pass `None` to keep all snapshots. Defaults to `5` for the TensorFlow engine when not set.
+</ParamField>
+
+<ParamField path="displayiters" type="int | None" default="None">
+  Number of iterations between each loss log line within an epoch. Overrides the value in `pose_config.yaml` / `pytorch_config.yaml`. For the PyTorch engine this maps to `display_iters`.
+</ParamField>
+
+<ParamField path="saveiters" type="int | None" default="None">
+  **TensorFlow engine only.** Iterations between snapshot saves. Overrides the value in `pose_cfg.yaml`. Use `save_epochs` for the PyTorch engine.
+</ParamField>
+
+<ParamField path="maxiters" type="int | None" default="None">
+  **TensorFlow engine only.** Maximum training iterations. Use `epochs` for the PyTorch engine.
+</ParamField>
+
+<ParamField path="epochs" type="int | None" default="None">
+  **PyTorch engine only.** Maximum number of epochs to train the pose model. If `None`, the value from `pytorch_config.yaml` is used. One epoch equals one full pass over the training images.
+</ParamField>
+
+<ParamField path="save_epochs" type="int | None" default="None">
+  **PyTorch engine only.** Number of epochs between each snapshot save. If `None`, the value from `pytorch_config.yaml` is used.
+</ParamField>
+
+<ParamField path="allow_growth" type="bool" default="True">
+  **TensorFlow engine only.** When `True`, the GPU memory allocator grows incrementally rather than pre-allocating the full requested region. Useful on smaller GPUs.
+</ParamField>
+
+<ParamField path="gputouse" type="str | None" default="None">
+  **TensorFlow engine only.** GPU index as shown in `nvidia-smi`. Pass `None` to use the CPU. For the PyTorch engine use `device` instead.
+</ParamField>
+
+<ParamField path="autotune" type="bool" default="False">
+  **TensorFlow engine only.** Enables TensorFlow autotuning. Usually faster when set to `False`.
+</ParamField>
+
+<ParamField path="keepdeconvweights" type="bool" default="True">
+  When resuming training from a snapshot, also restore the decoder / head weights. Set to `False` if you have changed the number of body parts and need a fresh head. Maps to `load_head_weights` for the PyTorch engine.
+</ParamField>
+
+<ParamField path="modelprefix" type="str" default='""'>
+  Subdirectory prefix for the model folder. Useful when storing multiple model variants inside one project. By default, models are stored directly in the project folder.
+</ParamField>
+
+<ParamField path="superanimal_name" type="str" default='""'>
+  **TensorFlow engine only.** Name of the SuperAnimal model to use as the starting point. For the PyTorch engine, specify this via `weight_init` when calling `create_training_dataset`.
+</ParamField>
+
+<ParamField path="superanimal_transfer_learning" type="bool" default="False">
+  **TensorFlow engine only.** When `True`, replaces the decoding layer (transfer learning). When `False` with `superanimal_name` set, reuses the existing decoding layer (fine-tuning).
+</ParamField>
+
+<ParamField path="engine" type="Engine | None" default="None">
+  Override the engine recorded in the shuffle metadata. Not recommended for routine use.
+</ParamField>
+
+<ParamField path="device" type="str | None" default="None">
+  **PyTorch engine only.** PyTorch device string, e.g. `"cpu"`, `"cuda"`, `"cuda:0"`, `"mps"`. If `None`, the device from `pytorch_config.yaml` is used.
+</ParamField>
+
+<ParamField path="snapshot_path" type="str | Path | None" default="None">
+  **PyTorch engine only.** Path to a pose model snapshot from which to resume training. Takes precedence over `resume_training_from` in `pytorch_config.yaml`.
+</ParamField>
+
+<ParamField path="detector_path" type="str | Path | None" default="None">
+  **PyTorch engine only, top-down models.** Path to a detector snapshot from which to resume detector training.
+</ParamField>
+
+<ParamField path="batch_size" type="int | None" default="None">
+  **PyTorch engine only.** Override the batch size for the pose model. If `None`, the value from `pytorch_config.yaml` is used.
+</ParamField>
+
+<ParamField path="detector_batch_size" type="int | None" default="None">
+  **PyTorch engine only, top-down models.** Override the batch size for the detector.
+</ParamField>
+
+<ParamField path="detector_epochs" type="int | None" default="None">
+  **PyTorch engine only, top-down models.** Maximum number of epochs to train the detector. Setting to `0` skips detector training entirely.
+</ParamField>
+
+<ParamField path="detector_save_epochs" type="int | None" default="None">
+  **PyTorch engine only, top-down models.** Epochs between detector snapshot saves.
+</ParamField>
+
+<ParamField path="pose_threshold" type="float | None" default="0.1">
+  **PyTorch engine only.** Confidence threshold for pseudo-labels during SuperAnimal memory-replay fine-tuning. Predictions below this value are discarded.
+</ParamField>
+
+<ParamField path="pytorch_cfg_updates" type="dict | None" default="None">
+  **PyTorch engine only.** Arbitrary overrides to `pytorch_config.yaml`, expressed as a flat dict with dot-separated key paths. For example:
+  ```python
+  pytorch_cfg_updates={"runner.gpus": [0, 1, 2, 3]}
+  ```
+  See `pytorch_config.yaml` in the model folder for the full list of keys.
+</ParamField>
+
+### Return value
+
+`None`. Snapshots and training logs are written to the model folder (inside the project directory).
+
+### GPU usage guidance
+
+For the **PyTorch engine**, use the `device` parameter:
+
+```python
+deeplabcut.train_network(config, device="cuda:0")   # first NVIDIA GPU
+deeplabcut.train_network(config, device="cuda:1")   # second NVIDIA GPU
+deeplabcut.train_network(config, device="mps")      # Apple Silicon GPU
+deeplabcut.train_network(config, device="cpu")      # CPU only
+```
+
+For multi-GPU training, pass GPU indices through `pytorch_cfg_updates`:
+
+```python
+deeplabcut.train_network(
+    config,
+    pytorch_cfg_updates={"runner.gpus": [0, 1]},
+)
+```
+
+For the **TensorFlow engine**, use the `gputouse` integer index from `nvidia-smi`:
+
+```python
+deeplabcut.train_network(config, gputouse=0)    # first GPU
+deeplabcut.train_network(config, gputouse=None) # CPU
+```
+
+### Examples
+
+**Basic training (PyTorch engine, default settings):**
+
+```python
+import deeplabcut
+
+deeplabcut.train_network("/analysis/project/reaching-task/config.yaml")
+```
+
+**Override epochs, batch size, and save frequency:**
+
+```python
+deeplabcut.train_network(
+    "/analysis/project/reaching-task/config.yaml",
+    shuffle=1,
+    epochs=200,
+    save_epochs=25,
+    batch_size=16,
+    displayiters=50,
+)
+```
+
+**Resume pose-model training from a specific snapshot:**
+
+```python
+deeplabcut.train_network(
+    "/analysis/project/reaching-task/config.yaml",
+    shuffle=1,
+    snapshot_path="/analysis/project/reaching-task/dlc-models-pytorch/.../snapshot-100.pt",
+    epochs=300,
+)
+```
+
+**Train a second shuffle (TensorFlow engine), keeping all snapshots:**
+
+```python
+deeplabcut.train_network(
+    "/analysis/project/reaching-task/config.yaml",
+    shuffle=2,
+    keepdeconvweights=True,
+    max_snapshots_to_keep=None,
+)
+```
+
+---
+
+## return_train_network_path
+
+Returns the file-system paths for a shuffle's training configuration and snapshot folder. Useful for inspecting or modifying config files directly.
+
+```python
+import deeplabcut
+
+train_cfg, test_cfg, snapshot_folder = deeplabcut.return_train_network_path(config)
+```
+
+### Parameters
+
+<ParamField path="config" type="str | Path" required>
+  Full path to the project's `config.yaml` file.
+</ParamField>
+
+<ParamField path="shuffle" type="int" default="1">
+  Shuffle index.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="int" default="0">
+  Which `TrainingFraction` entry to use.
+</ParamField>
+
+<ParamField path="modelprefix" type="str" default='""'>
+  Model folder prefix, matching the value used when the training dataset was created.
+</ParamField>
+
+<ParamField path="engine" type="Engine | None" default="None">
+  Override the engine recorded in the shuffle metadata.
+</ParamField>
+
+### Return value
+
+A three-element tuple of `Path` objects:
+
+<ResponseField name="trainposeconfigfile" type="Path">
+  Path to the training pose configuration file (`pytorch_config.yaml` for PyTorch, `pose_cfg.yaml` for TensorFlow).
+</ResponseField>
+
+<ResponseField name="testposeconfigfile" type="Path">
+  Path to the test pose configuration file.
+</ResponseField>
+
+<ResponseField name="snapshotfolder" type="Path">
+  Path to the folder where snapshots are saved (the `train/` subfolder of the model directory).
+</ResponseField>
+
+### Example
+
+```python
+import deeplabcut
+
+train_cfg, test_cfg, snapshot_dir = deeplabcut.return_train_network_path(
+    "/analysis/project/reaching-task/config.yaml",
+    shuffle=1,
+    trainingsetindex=0,
+)
+
+print(f"Training config: {train_cfg}")
+print(f"Snapshots at:    {snapshot_dir}")
+```
+
+---
+
+## export_model
+
+Packages a trained model's weights and configuration into a single `.pt` file inside `exported-models-pytorch/` for use with [DLC-Live](https://github.com/DeepLabCut/DLC-Live).
+
+<Note>
+`export_model` is only implemented for the **PyTorch engine**.
+</Note>
+
+```python
+import deeplabcut
+
+deeplabcut.export_model(config, shuffle=1, snapshotindex=-1)
+```
+
+### Parameters
+
+<ParamField path="config" type="str | Path" required>
+  Full path to the project's `config.yaml` file.
+</ParamField>
+
+<ParamField path="shuffle" type="int" default="1">
+  Shuffle index of the model to export.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="int" default="0">
+  Which `TrainingFraction` entry to use.
+</ParamField>
+
+<ParamField path="snapshotindex" type="int | None" default="None">
+  Index of the snapshot to export (0-based). Use `-1` for the last saved snapshot. If `None`, uses the `snapshotindex` from `config.yaml`.
+</ParamField>
+
+<ParamField path="detector_snapshot_index" type="int | None" default="None">
+  **Top-down models only.** Index of the detector snapshot to bundle. If `None`, uses `detector_snapshotindex` from `config.yaml`.
+</ParamField>
+
+<ParamField path="iteration" type="int | None" default="None">
+  Project iteration (active learning loop) to export. If `None`, uses the value from `config.yaml`.
+</ParamField>
+
+<ParamField path="overwrite" type="bool" default="False">
+  If the export file already exists, overwrite it.
+</ParamField>
+
+<ParamField path="wipe_paths" type="bool" default="False">
+  Remove absolute project paths and `weight_init` entries from the exported `pytorch_config.yaml`. Recommended when sharing the exported model.
+</ParamField>
+
+<ParamField path="without_detector" type="bool" default="False">
+  Export a top-down model without its detector. The exported model will rely on ground-truth bounding boxes for inference.
+</ParamField>
+
+<ParamField path="modelprefix" type="str | None" default="None">
+  Model folder prefix, matching the value used at training time.
+</ParamField>
+
+### Return value
+
+`None`. The exported `.pt` file is written to `<project_path>/exported-models-pytorch/<model_folder_name>/`.
+
+### Example
+
+```python
+import deeplabcut
+
+# Export the last snapshot for shuffle 3, stripping local paths
+deeplabcut.export_model(
+    "/analysis/project/reaching-task/config.yaml",
+    shuffle=3,
+    snapshotindex=-1,
+    wipe_paths=True,
+    overwrite=True,
+)
+```

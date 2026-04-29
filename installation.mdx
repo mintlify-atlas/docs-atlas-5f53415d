@@ -1,0 +1,232 @@
+---
+title: "Install DeepLabCut on Windows, Linux, and macOS"
+description: "Install DeepLabCut via pip or conda with optional GUI, TensorFlow, and Model Zoo extras. Includes GPU/CUDA setup and Docker instructions."
+---
+
+DeepLabCut runs on Windows, Linux, and macOS and supports Python 3.10, 3.11, and 3.12. The recommended path for most users is a conda environment with pip-installed DeepLabCut. If you have an NVIDIA GPU, install PyTorch with CUDA support before installing DeepLabCut for the best training and inference performance.
+
+<Warning>
+  DeepLabCut requires **Python 3.10 or higher**. Python 2 is not supported. If you are using an older environment, create a fresh one before proceeding.
+</Warning>
+
+## Choose your installation method
+
+<Tabs>
+  <Tab title="Conda (recommended)">
+    Conda manages Python, system libraries (including ffmpeg), and GPU drivers in one isolated environment. This is the easiest way to get a working installation on any operating system.
+
+    <Steps>
+      <Step title="Install Anaconda or Miniconda">
+        Download and install [Anaconda](https://www.anaconda.com/download/) or [Miniconda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html) for your OS.
+
+        On **Apple Silicon Macs** (M1/M2/M3), use Miniconda for the best compatibility:
+
+        ```bash
+        wget https://repo.anaconda.com/miniconda/Miniconda3-py310_4.12.0-MacOSX-arm64.sh -O ~/miniconda.sh
+        bash ~/miniconda.sh -b -p $HOME/miniconda
+        source ~/miniconda/bin/activate
+        conda init zsh
+        ```
+      </Step>
+
+      <Step title="Create and activate the DeepLabCut environment">
+        The easiest option is to use the official conda environment file, which installs Python, ffmpeg, PyTorch, and DeepLabCut in one command.
+
+        Download [DEEPLABCUT.yaml](https://github.com/DeepLabCut/DeepLabCut/blob/main/conda-environments/DEEPLABCUT.yaml) from the repository, then run:
+
+        ```bash
+        conda env create -f DEEPLABCUT.yaml
+        ```
+
+        Once the environment is created, activate it:
+
+        <CodeGroup>
+
+        ```bash macOS / Linux
+        conda activate DEEPLABCUT
+        ```
+
+        ```bash Windows
+        activate DEEPLABCUT
+        ```
+
+        </CodeGroup>
+
+        You should see `(DEEPLABCUT)` on the left of your terminal prompt. DeepLabCut is already installed — no further pip install is needed.
+      </Step>
+
+      <Step title="Verify GPU access (NVIDIA GPU users only)">
+        Run the following to confirm PyTorch can see your GPU:
+
+        ```bash
+        python -c "import torch; print(torch.cuda.is_available())"
+        ```
+
+        If this prints `True`, your GPU is ready. If it prints `False`, see the [GPU setup](#gpu-setup) section below.
+      </Step>
+    </Steps>
+
+    <Note>
+      The conda environment file installs `deeplabcut[gui,modelzoo,wandb]` along with PyTorch and system dependencies. You do not need to run `pip install deeplabcut` separately.
+    </Note>
+  </Tab>
+
+  <Tab title="pip">
+    You can install DeepLabCut directly with pip into any Python 3.10+ environment, including existing conda environments you manage yourself.
+
+    <Steps>
+      <Step title="Create a Python environment">
+        Create a clean environment to avoid dependency conflicts:
+
+        ```bash
+        conda create -n DEEPLABCUT python=3.12
+        conda activate DEEPLABCUT
+        ```
+      </Step>
+
+      <Step title="Install PyTorch">
+        Install PyTorch before DeepLabCut. Visit [pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/) to select the right command for your OS and CUDA version.
+
+        ```bash
+        # CPU-only
+        pip install torch torchvision
+
+        # GPU — CUDA 11.8 example (adjust for your CUDA version)
+        pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+        ```
+
+        <Note>
+          If you have an NVIDIA GPU, install the GPU version of PyTorch here. The CUDA version in the command must match the CUDA toolkit installed on your system. Run `nvcc -V` or `nvidia-smi` to check.
+        </Note>
+      </Step>
+
+      <Step title="Install DeepLabCut">
+        Choose the extras that match your use case:
+
+        <CodeGroup>
+
+        ```bash Core (headless)
+        pip install deeplabcut
+        ```
+
+        ```bash With GUI
+        pip install "deeplabcut[gui]"
+        ```
+
+        ```bash With GUI + Model Zoo
+        pip install "deeplabcut[gui,modelzoo]"
+        ```
+
+        ```bash With TensorFlow (legacy)
+        pip install "deeplabcut[tf]"
+        ```
+
+        ```bash With GUI + TensorFlow (legacy)
+        pip install "deeplabcut[gui,tf]"
+        ```
+
+        </CodeGroup>
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Docker">
+    Docker provides the most reproducible environment and is recommended for advanced Linux users who want consistent deployments.
+
+    DeepLabCut provides official Docker images on [DockerHub](https://hub.docker.com/r/deeplabcut/deeplabcut), and the `deeplabcut-docker` helper script simplifies container management.
+
+    ```bash
+    pip install deeplabcut-docker
+    ```
+
+    See the [Docker documentation](https://github.com/DeepLabCut/DeepLabCut/tree/main/docker) for full usage instructions, including GPU passthrough and volume mounting.
+
+    <Note>
+      Docker GPU support requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) on Linux. Docker is supported on Linux only for GPU use.
+    </Note>
+  </Tab>
+</Tabs>
+
+## pip extras reference
+
+| Extra | What it includes |
+|---|---|
+| `deeplabcut` | Core package with PyTorch backend |
+| `deeplabcut[gui]` | Adds the napari-based GUI for labeling and project management |
+| `deeplabcut[modelzoo]` | Adds Model Zoo / SuperAnimal model support |
+| `deeplabcut[tf]` | Adds TensorFlow backend (legacy; see note below) |
+| `deeplabcut[gui,modelzoo]` | GUI plus SuperAnimal models |
+| `deeplabcut[gui,tf]` | GUI plus TensorFlow backend |
+
+<Warning>
+  TensorFlow support is deprecated. The maximum supported version is TensorFlow 2.10 on Windows and 2.12 on Linux/macOS. DeepLabCut 3.0+ uses PyTorch as the primary backend. Use `[tf]` extras only if you need to work with existing TensorFlow-trained projects.
+</Warning>
+
+## GPU setup
+
+A GPU is not required, but training on a CPU is roughly 10x slower. An NVIDIA GPU with at least 8 GB of memory is recommended.
+
+<Steps>
+  <Step title="Install NVIDIA drivers">
+    Download and install the driver for your specific GPU from [nvidia.com/Download](https://www.nvidia.com/Download/index.aspx). Verify the driver is installed:
+
+    ```bash
+    nvidia-smi
+    ```
+  </Step>
+
+  <Step title="Install CUDA">
+    Download the CUDA toolkit from [developer.nvidia.com/cuda-downloads](https://developer.nvidia.com/cuda-downloads). The CUDA version you install must be compatible with your chosen PyTorch version. Check PyTorch's compatibility table at [pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/).
+
+    Verify CUDA is installed:
+
+    ```bash
+    nvcc -V
+    ```
+  </Step>
+
+  <Step title="Verify PyTorch GPU access">
+    After installing DeepLabCut, confirm PyTorch can access your GPU:
+
+    ```python
+    import torch
+    print(torch.cuda.is_available())  # should print True
+    print(torch.cuda.get_device_name(0))  # prints your GPU name
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  **Apple Silicon (M1/M2/M3):** GPU acceleration is automatic when using Miniconda on Apple Silicon. You do not need to install CUDA. PyTorch uses the Metal Performance Shaders (MPS) backend.
+</Note>
+
+## Updating DeepLabCut
+
+To update to the latest version, activate your environment and run:
+
+```bash
+pip install --upgrade deeplabcut
+```
+
+To install a specific version:
+
+```bash
+pip install deeplabcut==3.0
+```
+
+All data labeled in DeepLabCut 2.x is fully compatible with version 3.x and the PyTorch engine. You can check the installed version with:
+
+```python
+import deeplabcut
+print(deeplabcut.__version__)
+```
+
+## Installing from source
+
+If you want to modify the code or use the latest unreleased features, clone the repository and install in editable mode:
+
+```bash
+git clone https://github.com/DeepLabCut/DeepLabCut.git
+cd DeepLabCut
+pip install -e ".[gui]"
+```

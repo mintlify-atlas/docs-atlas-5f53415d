@@ -1,0 +1,683 @@
+---
+title: "Utility functions and video tools reference"
+description: "Reference for DeepLabCut's video manipulation helpers, pose-output data conversion utilities, and 3D triangulation and camera calibration functions."
+---
+
+DeepLabCut ships a set of standalone utility functions for common pre- and post-processing tasks: trimming, cropping, and downsampling raw videos before analysis; converting pose-output `.h5` files to CSV or NWB format; migrating single-animal annotation data to the multi-animal format; and performing full 3D reconstruction with stereo camera calibration and triangulation. All functions listed here are importable directly from the top-level `deeplabcut` namespace.
+
+---
+
+## Video manipulation
+
+### `CropVideo`
+
+Crops a video to a rectangular region of interest and writes a new file to disk.
+
+```python
+deeplabcut.CropVideo(
+    vname,
+    width=256,
+    height=256,
+    origin_x=0,
+    origin_y=0,
+    outsuffix="cropped",
+    outpath=None,
+    useGUI=False,
+)
+```
+
+Returns the full path to the cropped output file.
+
+<ParamField path="vname" type="string" required>
+  Full path to the source video file.
+</ParamField>
+
+<ParamField path="width" type="int" default="256">
+  Width of the output video in pixels.
+</ParamField>
+
+<ParamField path="height" type="int" default="256">
+  Height of the output video in pixels.
+</ParamField>
+
+<ParamField path="origin_x" type="int" default="0">
+  X-axis coordinate of the top-left corner of the crop bounding box.
+</ParamField>
+
+<ParamField path="origin_y" type="int" default="0">
+  Y-axis coordinate of the top-left corner of the crop bounding box.
+</ParamField>
+
+<ParamField path="outsuffix" type="string" default='"cropped"'>
+  String appended to the original filename to form the output filename.
+</ParamField>
+
+<ParamField path="outpath" type="string" default="None">
+  Directory to save the output video. Defaults to the same directory as the source video.
+</ParamField>
+
+<ParamField path="useGUI" type="bool" default="False">
+  When `True`, opens an interactive matplotlib window so you can draw the crop region with a mouse. Overrides `width`, `height`, `origin_x`, and `origin_y`.
+</ParamField>
+
+**Example**
+
+```python
+import deeplabcut
+
+# Crop to a 220×320 px region starting at the top-left corner
+deeplabcut.CropVideo(
+    "/data/videos/mouse1.avi",
+    width=220,
+    height=320,
+    outsuffix="cropped",
+)
+# Saves: /data/videos/mouse1cropped.avi
+```
+
+---
+
+### `DownSampleVideo`
+
+Rescales a video to a lower resolution and optionally rotates it, then writes the output to disk. Pass `-1` for either `width` or `height` to preserve the aspect ratio.
+
+```python
+deeplabcut.DownSampleVideo(
+    vname,
+    width=-1,
+    height=200,
+    outsuffix="downsampled",
+    outpath=None,
+    rotatecw="No",
+    angle=0.0,
+)
+```
+
+Returns the full path to the downsampled output file.
+
+<ParamField path="vname" type="string" required>
+  Full path to the source video file.
+</ParamField>
+
+<ParamField path="width" type="int" default="-1">
+  Width of the output video in pixels. Set to `-1` to auto-scale from `height` while preserving the aspect ratio.
+</ParamField>
+
+<ParamField path="height" type="int" default="200">
+  Height of the output video in pixels. Set to `-1` to auto-scale from `width` while preserving the aspect ratio.
+</ParamField>
+
+<ParamField path="outsuffix" type="string" default='"downsampled"'>
+  String appended to the original filename to form the output filename.
+</ParamField>
+
+<ParamField path="outpath" type="string" default="None">
+  Directory to save the output video. Defaults to the same directory as the source video.
+</ParamField>
+
+<ParamField path="rotatecw" type="string" default='"No"'>
+  Rotation mode. `"No"` skips rotation, `"Yes"` rotates 90° clockwise, and `"Arbitrary"` applies the angle specified by `angle`.
+</ParamField>
+
+<ParamField path="angle" type="float" default="0.0">
+  Rotation angle in degrees used when `rotatecw="Arbitrary"`. Negative values rotate counter-clockwise.
+</ParamField>
+
+**Example**
+
+```python
+import deeplabcut
+
+# Downsample to 320px height, keep aspect ratio, rotate 90° clockwise
+output = deeplabcut.DownSampleVideo(
+    "/data/videos/mouse1.avi",
+    height=320,
+    rotatecw="Yes",
+)
+print(output)  # /data/videos/mouse1downsampled.avi
+```
+
+---
+
+### `ShortenVideo`
+
+Extracts a time-bounded clip from a video using `ffmpeg` and saves it to disk.
+
+```python
+deeplabcut.ShortenVideo(
+    vname,
+    start="00:00:01",
+    stop="00:01:00",
+    outsuffix="short",
+    outpath=None,
+)
+```
+
+Returns the full path to the shortened output file.
+
+<ParamField path="vname" type="string" required>
+  Full path to the source video file.
+</ParamField>
+
+<ParamField path="start" type="string" default='"00:00:01"'>
+  Timestamp (`HH:MM:SS`) at which the output clip should begin.
+</ParamField>
+
+<ParamField path="stop" type="string" default='"00:01:00"'>
+  Timestamp (`HH:MM:SS`) at which the output clip should end. Must not exceed the video duration.
+</ParamField>
+
+<ParamField path="outsuffix" type="string" default='"short"'>
+  String appended to the original filename to form the output filename.
+</ParamField>
+
+<ParamField path="outpath" type="string" default="None">
+  Directory to save the output video. Defaults to the same directory as the source video.
+</ParamField>
+
+**Example**
+
+```python
+import deeplabcut
+
+# Extract minutes 17–22 from a recording
+deeplabcut.ShortenVideo(
+    "/data/videos/session1.avi",
+    start="00:17:00",
+    stop="00:22:00",
+    outsuffix="brief",
+)
+# Saves: /data/videos/session1brief.avi
+```
+
+---
+
+### `check_video_integrity`
+
+Checks whether a video file can be decoded correctly. Runs two checks: a fast `ffmpeg`-based error scan that writes a log file alongside the video, and a frame-by-frame OpenCV read that warns on any unreadable frame.
+
+```python
+deeplabcut.check_video_integrity(video_path)
+```
+
+<ParamField path="video_path" type="string" required>
+  Full path to the video file to inspect.
+</ParamField>
+
+<Warning>
+  If errors are found, a `.log` file is written next to the video and a `UserWarning` is raised. The log contains the full `ffmpeg` error report.
+</Warning>
+
+**Example**
+
+```python
+import deeplabcut
+
+deeplabcut.check_video_integrity("/data/videos/mouse1.avi")
+# If the video is corrupt, prints a warning and writes mouse1.log
+```
+
+---
+
+## Data conversion
+
+### `analyze_videos_converth5_to_csv`
+
+Converts all DeepLabCut `.h5` pose-output files in a folder to `.csv` format. Useful when `save_as_csv=False` was used during `analyze_videos` and you want to export data afterwards without re-running inference.
+
+```python
+deeplabcut.analyze_videos_converth5_to_csv(
+    video_folder,
+    videotype=".mp4",
+    listofvideos=False,
+)
+```
+
+<ParamField path="video_folder" type="string" required>
+  Absolute path to the folder containing the videos and their corresponding `.h5` output files. When `listofvideos=True`, pass a list of video paths instead.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='".mp4"'>
+  File extension used to identify which videos to process. Only `.h5` files whose names contain a matching video stem are converted.
+</ParamField>
+
+<ParamField path="listofvideos" type="bool" default="False">
+  When `True`, treats `video_folder` as a list of individual video file paths rather than a directory.
+</ParamField>
+
+**Example**
+
+```python
+import deeplabcut
+
+# Convert all h5 outputs for .mp4 videos in the folder
+deeplabcut.analyze_videos_converth5_to_csv(
+    "/media/experiments/cheetahvideos",
+    videotype=".mp4",
+)
+```
+
+---
+
+### `analyze_videos_converth5_to_nwb`
+
+Converts DeepLabCut `.h5` pose-output files to [Neurodata Without Borders (NWB)](https://www.nwb.org/) format using the `dlc2nwb` package.
+
+```python
+deeplabcut.analyze_videos_converth5_to_nwb(
+    config,
+    video_folder,
+    videotype=".mp4",
+    listofvideos=False,
+)
+```
+
+<Note>
+  Requires the optional `dlc2nwb` package: `pip install dlc2nwb`.
+</Note>
+
+<ParamField path="config" type="string" required>
+  Absolute path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="video_folder" type="string" required>
+  Absolute path to the folder containing videos and their `.h5` output files. When `listofvideos=True`, pass a list of video paths instead.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='".mp4"'>
+  File extension used to filter which videos are processed.
+</ParamField>
+
+<ParamField path="listofvideos" type="bool" default="False">
+  When `True`, treats `video_folder` as a list of individual video file paths.
+</ParamField>
+
+**Example**
+
+```python
+import deeplabcut
+
+deeplabcut.analyze_videos_converth5_to_nwb(
+    config="/project/reaching-task/config.yaml",
+    video_folder="/media/experiments/reachingvideos",
+    videotype=".mp4",
+)
+```
+
+---
+
+### `convertcsv2h5`
+
+Converts manually edited CSV annotation files in the `labeled-data/` folder back to HDF5 (`.h5`) format. Use this after editing a CSV to correct scorer names or fix labels.
+
+```python
+deeplabcut.convertcsv2h5(
+    config,
+    userfeedback=True,
+    scorer=None,
+)
+```
+
+<Warning>
+  Conversion may corrupt data if the CSV structure is inconsistent with the original. Always keep a backup of the original `.h5` file before running this function.
+</Warning>
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="userfeedback" type="bool" default="True">
+  When `True`, prompts you folder-by-folder before converting. Set to `False` for fully automated batch conversion.
+</ParamField>
+
+<ParamField path="scorer" type="string" default="None">
+  If provided, overwrites the scorer/annotator name in all converted files with this string.
+</ParamField>
+
+**Example**
+
+```python
+import deeplabcut
+
+# Convert all CSVs and reassign scorer name
+deeplabcut.convertcsv2h5(
+    "/analysis/project/reaching-task/config.yaml",
+    scorer="Albert",
+)
+```
+
+---
+
+### `convert2_maDLC`
+
+Converts a single-animal annotation dataset to the multi-animal DeepLabCut (maDLC) format by inserting an `individuals` column. The first individual listed in `config.yaml` is used by default.
+
+```python
+deeplabcut.convert2_maDLC(
+    config,
+    userfeedback=True,
+    forceindividual=None,
+)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file. The project must already be configured as a multi-animal project with `individuals` defined.
+</ParamField>
+
+<ParamField path="userfeedback" type="bool" default="True">
+  When `True`, prompts you for each `labeled-data` folder before converting. Set to `False` to run without interaction.
+</ParamField>
+
+<ParamField path="forceindividual" type="string" default="None">
+  If provided, this string is used as the individual label instead of the first entry from `config.yaml`. Useful for assigning a specific animal ID.
+</ParamField>
+
+**Example**
+
+```python
+import deeplabcut
+
+# Convert using default individual from config
+deeplabcut.convert2_maDLC("/socialrearing-task/config.yaml")
+
+# Assign a specific animal ID
+deeplabcut.convert2_maDLC(
+    "/socialrearing-task/config.yaml",
+    forceindividual="mus17",
+)
+```
+
+---
+
+## 3D utilities
+
+These functions implement the full stereo-camera 3D pose estimation pipeline: camera calibration, distortion verification, triangulation, and labeled video generation.
+
+### `calibrate_cameras`
+
+Extracts checkerboard corners from calibration images, computes per-camera intrinsic matrices, and (when `calibrate=True`) performs stereo calibration to produce a `stereo_params.pickle` file in the project folder.
+
+```python
+deeplabcut.calibrate_cameras(
+    config,
+    cbrow=8,
+    cbcol=6,
+    calibrate=False,
+    alpha=0.4,
+    search_window_size=(11, 11),
+)
+```
+
+<Tip>
+  Run with `calibrate=False` first to inspect the detected corners saved in the project's `calibration_images/corners/` directory. Remove image pairs where corners are incorrectly detected, then re-run with `calibrate=True`.
+</Tip>
+
+<ParamField path="config" type="string" required>
+  Full path to the **3D project** `config.yaml` file.
+</ParamField>
+
+<ParamField path="cbrow" type="int" default="8">
+  Number of inner corner rows on the calibration checkerboard.
+</ParamField>
+
+<ParamField path="cbcol" type="int" default="6">
+  Number of inner corner columns on the calibration checkerboard.
+</ParamField>
+
+<ParamField path="calibrate" type="bool" default="False">
+  Set to `True` to run the full stereo calibration after verifying corner detections. Saves intrinsic matrices and `stereo_params.pickle` to the project folder.
+</ParamField>
+
+<ParamField path="alpha" type="float" default="0.4">
+  Free scaling parameter for stereo rectification, in the range `[0, 1]`. `0` retains only valid (non-black-border) pixels; `1` retains all pixels from the original images.
+</ParamField>
+
+<ParamField path="search_window_size" type="tuple" default="(11, 11)">
+  Half-size of the search window for subpixel corner refinement. Larger values improve accuracy on low-resolution images at the cost of speed.
+</ParamField>
+
+**Example**
+
+```python
+import deeplabcut
+
+config_3d = "/project/mouse3d/config.yaml"
+
+# Step 1: Inspect detected corners
+deeplabcut.calibrate_cameras(config_3d, cbrow=8, cbcol=6)
+
+# Step 2: Run calibration after removing bad image pairs
+deeplabcut.calibrate_cameras(config_3d, cbrow=8, cbcol=6, calibrate=True)
+```
+
+---
+
+### `check_undistortion`
+
+Applies the stereo calibration matrices to undistort the calibration images and saves the results to `calibration_images/undistortion/`. Optionally plots the undistorted corner points side-by-side for visual inspection.
+
+```python
+deeplabcut.check_undistortion(
+    config,
+    cbrow=8,
+    cbcol=6,
+    plot=True,
+)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the 3D project `config.yaml` file. The `stereo_params.pickle` file must already exist (run `calibrate_cameras` with `calibrate=True` first).
+</ParamField>
+
+<ParamField path="cbrow" type="int" default="8">
+  Number of inner corner rows on the checkerboard.
+</ParamField>
+
+<ParamField path="cbcol" type="int" default="6">
+  Number of inner corner columns on the checkerboard.
+</ParamField>
+
+<ParamField path="plot" type="bool" default="True">
+  When `True`, saves `Original_Image.png` and `undistorted_points.png` plots to the undistortion output folder.
+</ParamField>
+
+**Example**
+
+```python
+import deeplabcut
+
+deeplabcut.check_undistortion(
+    "/project/mouse3d/config.yaml",
+    cbrow=8,
+    cbcol=6,
+)
+```
+
+---
+
+### `triangulate`
+
+Runs 2D video analysis on each camera view (if not already done), undistorts the detected keypoints using the stereo calibration matrices, and triangulates them into 3D coordinates. Results are saved as an `.h5` file in the destination folder.
+
+```python
+deeplabcut.triangulate(
+    config,
+    video_path,
+    videotype="",
+    filterpredictions=True,
+    filtertype="median",
+    gputouse=None,
+    destfolder=None,
+    save_as_csv=False,
+    track_method="",
+)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the 3D project `config.yaml` file.
+</ParamField>
+
+<ParamField path="video_path" type="string | list" required>
+  Path to the directory containing video pairs, or a list of lists pairing camera-1 and camera-2 video paths: `[['cam1_vid1.avi', 'cam2_vid1.avi'], ...]`.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  File extension filter for videos when `video_path` is a directory. Defaults to common extensions (`avi`, `mp4`, `mov`, `mpeg`, `mkv`).
+</ParamField>
+
+<ParamField path="filterpredictions" type="bool" default="True">
+  When `True`, applies temporal filtering to the 2D predictions before triangulation.
+</ParamField>
+
+<ParamField path="filtertype" type="string" default='"median"'>
+  Temporal filter type. Supported values: `"median"` and `"arima"`.
+</ParamField>
+
+<ParamField path="gputouse" type="int" default="None">
+  GPU index to use for 2D pose inference. Set to `None` to use the CPU.
+</ParamField>
+
+<ParamField path="destfolder" type="string" default="None">
+  Directory to save triangulated output files. Defaults to the directory containing the videos.
+</ParamField>
+
+<ParamField path="save_as_csv" type="bool" default="False">
+  When `True`, also saves the triangulated 3D coordinates as a `.csv` file alongside the `.h5` output.
+</ParamField>
+
+<ParamField path="track_method" type="string" default='""'>
+  Tracking method for multi-animal projects. Supported values: `"box"`, `"skeleton"`, `"ellipse"`. Leave empty for single-animal projects.
+</ParamField>
+
+**Example**
+
+```python
+import deeplabcut
+
+config_3d = "/project/mouse3d/config.yaml"
+
+# Triangulate all video pairs in a directory
+deeplabcut.triangulate(config_3d, "/data/videos/")
+
+# Triangulate specific video pairs
+deeplabcut.triangulate(
+    config_3d,
+    [[
+        "/data/videos/video1-camera-1.avi",
+        "/data/videos/video1-camera-2.avi",
+    ]],
+    save_as_csv=True,
+)
+```
+
+---
+
+### `create_labeled_video_3d`
+
+Generates an MP4 video showing the two raw camera views side-by-side with overlaid keypoints, plus a 3D scatter plot of the triangulated pose. Reads from the `.h5` triangulation output produced by `triangulate`.
+
+```python
+deeplabcut.create_labeled_video_3d(
+    config,
+    path,
+    videofolder=None,
+    start=0,
+    end=None,
+    trailpoints=0,
+    videotype="",
+    view=(-113, -270),
+    xlim=None,
+    ylim=None,
+    zlim=None,
+    draw_skeleton=True,
+    color_by="bodypart",
+    figsize=(20, 8),
+    fps=30,
+    dpi=300,
+)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the 3D project `config.yaml` file.
+</ParamField>
+
+<ParamField path="path" type="list" required>
+  List of paths to triangulated `.h5` files, or a single directory path containing them.
+</ParamField>
+
+<ParamField path="videofolder" type="string" default="None">
+  Full path to the folder where raw camera videos are stored, if different from the directory containing the triangulation files.
+</ParamField>
+
+<ParamField path="start" type="int" default="0">
+  Frame index at which the output video begins.
+</ParamField>
+
+<ParamField path="end" type="int" default="None">
+  Frame index at which the output video ends. Defaults to the last frame.
+</ParamField>
+
+<ParamField path="trailpoints" type="int" default="0">
+  Number of previous frames to overlay as a motion trail on each frame.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  Extension of the raw camera videos, used when `path` is a directory.
+</ParamField>
+
+<ParamField path="view" type="tuple" default="(-113, -270)">
+  Elevation and azimuthal angles `(elev, azim)` for the 3D subplot.
+</ParamField>
+
+<ParamField path="xlim" type="list" default="None">
+  `[min, max]` limits for the X axis of the 3D plot. Defaults to the range of the data.
+</ParamField>
+
+<ParamField path="ylim" type="list" default="None">
+  `[min, max]` limits for the Y axis of the 3D plot. Defaults to the range of the data.
+</ParamField>
+
+<ParamField path="zlim" type="list" default="None">
+  `[min, max]` limits for the Z axis of the 3D plot. Defaults to the range of the data.
+</ParamField>
+
+<ParamField path="draw_skeleton" type="bool" default="True">
+  When `True`, connects keypoints with skeleton lines as defined in `config.yaml`.
+</ParamField>
+
+<ParamField path="color_by" type="string" default='"bodypart"'>
+  Coloring scheme for keypoints. `"bodypart"` assigns a unique color per body part; `"individual"` assigns a unique color per tracked individual.
+</ParamField>
+
+<ParamField path="figsize" type="tuple" default="(20, 8)">
+  `(width, height)` in inches for the output figure.
+</ParamField>
+
+<ParamField path="fps" type="int" default="30">
+  Frames per second of the output MP4 video.
+</ParamField>
+
+<ParamField path="dpi" type="int" default="300">
+  Dots per inch for rendering frames. Lower values produce smaller files; `100` is usually sufficient for screen viewing.
+</ParamField>
+
+**Example**
+
+```python
+import deeplabcut
+
+config_3d = "/project/mouse3d/config.yaml"
+
+# Create 3D video for frames 100–500, rotated to a custom view
+deeplabcut.create_labeled_video_3d(
+    config_3d,
+    ["/data/videos/"],
+    start=100,
+    end=500,
+    view=[30, 90],
+    xlim=[-12, 12],
+    ylim=[15, 25],
+    zlim=[20, 30],
+    trailpoints=5,
+)
+```

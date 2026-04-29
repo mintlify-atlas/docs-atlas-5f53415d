@@ -1,0 +1,453 @@
+---
+title: "Model evaluation API — evaluate_network"
+description: "Evaluate trained DeepLabCut models to compute RMSE and mAP metrics, inspect predictions per keypoint, and extract internal feature maps."
+---
+
+After training, `evaluate_network` runs the model on the labeled training and test images and writes quantitative error metrics to CSV and HDF files under `evaluation-results-pytorch/` (PyTorch) or `evaluation-results/` (TensorFlow). Metrics include root-mean-square error (RMSE) both with and without a confidence cutoff, and mean average precision (mAP) for multi-animal projects.
+
+A typical evaluation workflow looks like this:
+
+```python
+import deeplabcut
+
+# 1. Train
+deeplabcut.train_network("/analysis/project/reaching-task/config.yaml", shuffle=1)
+
+# 2. Evaluate — compare predictions to ground-truth labels
+deeplabcut.evaluate_network(
+    "/analysis/project/reaching-task/config.yaml",
+    Shuffles=[1],
+    plotting=True,
+)
+
+# 3. (Optional) Inspect per-keypoint error
+deeplabcut.evaluate_network(
+    "/analysis/project/reaching-task/config.yaml",
+    Shuffles=[1],
+    per_keypoint_evaluation=True,
+)
+```
+
+---
+
+## Metrics produced
+
+| Metric | Description |
+|--------|-------------|
+| **Train RMSE** | Pixel distance between predicted and labeled keypoints on training images, all predictions included. |
+| **Test RMSE** | Same metric on held-out test images. |
+| **Train RMSE (pcutoff)** | RMSE counting only predictions whose confidence exceeds `pcutoff`. |
+| **Test RMSE (pcutoff)** | Same metric on test images with confidence filter. |
+| **mAP / mAR** | Mean average precision / recall for multi-animal assembly (bottom-up models). |
+| **Per-keypoint RMSE** | Individual RMSE per body part, written to `*-keypoint-results.csv` when `per_keypoint_evaluation=True`. |
+
+Results are appended to a combined `CombinedEvaluation-results.csv` in the evaluation folder so you can compare multiple snapshots or shuffles in one place.
+
+---
+
+## evaluate_network
+
+Evaluates one or more snapshots for one or more shuffles and writes metrics to disk.
+
+```python
+import deeplabcut
+
+deeplabcut.evaluate_network(config, Shuffles=[1], ...)
+```
+
+### Parameters
+
+<ParamField path="config" type="str | Path" required>
+  Full path to the project's `config.yaml` file.
+</ParamField>
+
+<ParamField path="Shuffles" type="list[int]" default="[1]">
+  List of shuffle indices to evaluate. All shuffles in the list must use the same engine, otherwise an error is raised.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="int | str" default="0">
+  Which `TrainingFraction` entry to evaluate. Pass `"all"` to evaluate every fraction defined in `config.yaml`.
+</ParamField>
+
+<ParamField path="plotting" type="bool | str" default="False">
+  Save labeled images showing predicted versus ground-truth keypoints. Accepted values:
+  - `False` — no images saved (default).
+  - `True` — equivalent to `"bodypart"`.
+  - `"bodypart"` — each keypoint gets a unique color.
+  - `"individual"` — each animal gets a unique color (multi-animal projects).
+
+  For top-down models, predicted bounding boxes are also drawn when plotting is enabled.
+</ParamField>
+
+<ParamField path="show_errors" type="bool" default="True">
+  Print train and test RMSE to the console after evaluation.
+</ParamField>
+
+<ParamField path="comparisonbodyparts" type="str | list[str]" default='"all"'>
+  Restrict metric computation to a subset of body parts. Must be a subset of the body parts defined in `config.yaml`. Pass `"all"` to use every body part.
+</ParamField>
+
+<ParamField path="gputouse" type="int | None" default="None">
+  **TensorFlow engine only.** GPU index as shown in `nvidia-smi`. For the PyTorch engine, pass `device` via `torch_kwargs` instead.
+</ParamField>
+
+<ParamField path="rescale" type="bool" default="False">
+  Evaluate at the `global_scale` defined in `pose_config.yaml`. Images are resized before inference and the reported error is scaled back to the original pixel coordinates.
+</ParamField>
+
+<ParamField path="modelprefix" type="str" default='""'>
+  Model folder prefix used when the training dataset was created.
+</ParamField>
+
+<ParamField path="per_keypoint_evaluation" type="bool" default="False">
+  Compute and save per-keypoint RMSE in addition to the aggregate metrics. Results are written to `<scorer>-keypoint-results.csv` in the evaluation folder.
+</ParamField>
+
+<ParamField path="snapshots_to_evaluate" type="list[str] | None" default="None">
+  Explicit list of snapshot names to evaluate, e.g. `["snapshot-50", "snapshot-100"]`. When provided, `snapshotindex` (from `config.yaml`) is ignored.
+</ParamField>
+
+<ParamField path="pcutoff" type="float | list[float] | dict[str, float] | None" default="None">
+  **PyTorch engine only.** Confidence threshold used when computing the cutoff-filtered RMSE.
+  - `None` — read from `config.yaml` (default).
+  - `float` — one threshold for all body parts.
+  - `list[float]` — one threshold per body part in order (bodyparts + unique bodyparts).
+  - `dict[str, float]` — map body part names to thresholds; unmapped body parts default to `0.6`.
+
+  For the TensorFlow engine, set `pcutoff` in `config.yaml`.
+</ParamField>
+
+<ParamField path="engine" type="Engine | None" default="None">
+  Override the engine recorded in the shuffle metadata.
+</ParamField>
+
+<ParamField path="**torch_kwargs" type="any">
+  Additional keyword arguments forwarded to the PyTorch `evaluate_network`. Commonly used kwargs:
+  - `snapshotindex` (`int | str`) — override the snapshot index from `config.yaml`.
+  - `detector_snapshot_index` (`int`) — for top-down models, override the detector snapshot index.
+  - `device` (`str`) — PyTorch device string, e.g. `"cuda:0"`.
+</ParamField>
+
+### Return value
+
+`None`. Results are written to:
+- `<eval_folder>/<scorer>.h5` — predictions dataframe.
+- `<eval_folder>/<scorer>-results.csv` — aggregate metrics.
+- `<eval_folder>/<scorer>-keypoint-results.csv` — per-keypoint RMSE (only when `per_keypoint_evaluation=True`).
+- `CombinedEvaluation-results.csv` — appended combined results across all evaluations.
+
+### Examples
+
+**Evaluate shuffle 1 without saving images:**
+
+```python
+import deeplabcut
+
+deeplabcut.evaluate_network(
+    "/analysis/project/reaching-task/config.yaml",
+    Shuffles=[1],
+)
+```
+
+**Evaluate two shuffles and save labeled images:**
+
+```python
+deeplabcut.evaluate_network(
+    "/analysis/project/reaching-task/config.yaml",
+    Shuffles=[0, 1],
+    plotting=True,
+)
+```
+
+**Evaluate a multi-animal project with per-individual colors:**
+
+```python
+deeplabcut.evaluate_network(
+    "/analysis/project/reaching-task/config.yaml",
+    Shuffles=[1],
+    plotting="individual",
+)
+```
+
+**Apply a custom pcutoff per body part:**
+
+```python
+deeplabcut.evaluate_network(
+    "/analysis/project/reaching-task/config.yaml",
+    Shuffles=[1],
+    pcutoff={"left_ear": 0.8, "right_ear": 0.8},  # others default to 0.6
+)
+```
+
+**Evaluate specific snapshots with per-keypoint breakdown:**
+
+```python
+deeplabcut.evaluate_network(
+    "/analysis/project/reaching-task/config.yaml",
+    Shuffles=[1],
+    snapshots_to_evaluate=["snapshot-50", "snapshot-100", "snapshot-200"],
+    per_keypoint_evaluation=True,
+    show_errors=True,
+)
+```
+
+---
+
+## return_evaluate_network_data
+
+Returns the raw evaluation data (predictions, ground truth, metrics) for a previously evaluated shuffle without re-running inference. This function is **only implemented for the TensorFlow engine**.
+
+```python
+import deeplabcut
+
+data = deeplabcut.return_evaluate_network_data(config, shuffle=1)
+```
+
+### Parameters
+
+<ParamField path="config" type="str" required>
+  Full path to the project's `config.yaml` file.
+</ParamField>
+
+<ParamField path="shuffle" type="int" default="0">
+  Shuffle index of the previously evaluated model.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="int" default="0">
+  Which `TrainingFraction` entry to load. Can also be set to `"all"`.
+</ParamField>
+
+<ParamField path="comparisonbodyparts" type="str | list[str]" default='"all"'>
+  Subset of body parts for which to return metrics. Must match the set used during evaluation.
+</ParamField>
+
+<ParamField path="Snapindex" type="str | int | None" default="None">
+  Index or name of the snapshot whose results to load.
+</ParamField>
+
+<ParamField path="rescale" type="bool" default="False">
+  Whether the model was evaluated at a rescaled resolution (must match the evaluation call).
+</ParamField>
+
+<ParamField path="fulldata" type="bool" default="False">
+  When `True`, also returns the full annotation and prediction arrays in addition to the summary metrics. See return value below.
+</ParamField>
+
+<ParamField path="show_errors" type="bool" default="True">
+  Print errors to the console.
+</ParamField>
+
+<ParamField path="modelprefix" type="str" default='""'>
+  Model folder prefix used at training time.
+</ParamField>
+
+<ParamField path="returnjustfns" type="bool" default="True">
+  When `True`, return only file names rather than loaded data structures.
+</ParamField>
+
+<ParamField path="engine" type="Engine | None" default="None">
+  Override the engine recorded in the shuffle metadata. Passing `Engine.PYTORCH` raises `NotImplementedError`.
+</ParamField>
+
+### Return value
+
+When `fulldata=False` (default), returns a list of per-snapshot result tuples:
+
+```
+[trainingsiterations, trainfraction, shuffle, trainerror, testerror,
+ pcutoff, trainerrorpcutoff, testerrorpcutoff, snapshot_name, scale, net_type]
+```
+
+When `fulldata=True`, each element is a tuple of:
+
+<ResponseField name="DataMachine" type="DataFrame">
+  Model predictions as a Pandas DataFrame.
+</ResponseField>
+
+<ResponseField name="Data" type="DataFrame">
+  Ground-truth annotations as a Pandas DataFrame.
+</ResponseField>
+
+<ResponseField name="data" type="dict">
+  Combined annotation and prediction dictionary.
+</ResponseField>
+
+<ResponseField name="trainIndices" type="list[int]">
+  Indices of images belonging to the training split.
+</ResponseField>
+
+<ResponseField name="testIndices" type="list[int]">
+  Indices of images belonging to the test split.
+</ResponseField>
+
+<ResponseField name="trainFraction" type="float">
+  The training fraction used.
+</ResponseField>
+
+<ResponseField name="DLCscorer" type="str">
+  The scorer string identifying the model.
+</ResponseField>
+
+<ResponseField name="comparisonbodyparts" type="list[str]">
+  Body parts used for metric computation.
+</ResponseField>
+
+<ResponseField name="cfg" type="dict">
+  The loaded project configuration dictionary.
+</ResponseField>
+
+<ResponseField name="snapshot_name" type="str">
+  Name of the evaluated snapshot.
+</ResponseField>
+
+<Warning>
+`return_evaluate_network_data` is only implemented for **TensorFlow** shuffles. Calling it on a PyTorch shuffle raises `NotImplementedError`.
+</Warning>
+
+### Example
+
+```python
+import deeplabcut
+
+results = deeplabcut.return_evaluate_network_data(
+    "/analysis/project/reaching-task/config.yaml",
+    shuffle=1,
+    trainingsetindex=0,
+)
+
+for row in results:
+    train_iters, frac, shuf, train_err, test_err, *rest = row
+    print(f"Shuffle {shuf} | train error: {train_err:.2f}px | test error: {test_err:.2f}px")
+```
+
+---
+
+## extract_maps
+
+Extracts the raw model output maps — score maps, location-refinement fields, and part-affinity fields (PAFs, if available) — for a set of images. Returns a nested dictionary indexed by training-set fraction, snapshot index, and image index.
+
+```python
+import deeplabcut
+
+maps = deeplabcut.extract_maps(config, shuffle=1, Indices=[0, 5, 10])
+```
+
+### Parameters
+
+<ParamField path="config" type="str" required>
+  Full path to the project's `config.yaml` file.
+</ParamField>
+
+<ParamField path="shuffle" type="int" default="0">
+  Shuffle index of the model to use.
+</ParamField>
+
+<ParamField path="trainingsetindex" type="int" default="0">
+  Which `TrainingFraction` entry to use. Can be set to `"all"`.
+</ParamField>
+
+<ParamField path="gputouse" type="int | None" default="None">
+  **TensorFlow engine only.** GPU index from `nvidia-smi`. For the PyTorch engine use `device`.
+</ParamField>
+
+<ParamField path="device" type="str | None" default="None">
+  **PyTorch engine only.** PyTorch device string, e.g. `"cuda"`, `"cuda:0"`, `"cpu"`.
+</ParamField>
+
+<ParamField path="rescale" type="bool" default="False">
+  Run the model at the `global_scale` defined in the pose config. Errors are then reported in original-image pixel coordinates.
+</ParamField>
+
+<ParamField path="Indices" type="list[int] | None" default="None">
+  Indices of the labeled images for which to extract maps. When `None`, maps are extracted for all images.
+</ParamField>
+
+<ParamField path="modelprefix" type="str" default='""'>
+  Model folder prefix used at training time.
+</ParamField>
+
+<ParamField path="engine" type="Engine | None" default="None">
+  Override the engine recorded in the shuffle metadata.
+</ParamField>
+
+### Return value
+
+A nested dictionary with the structure:
+
+```
+{
+  training_fraction: {
+    snapshot_index: {
+      image_index: (image, scmap, locref, paf, bpt_names,
+                    partaffinity_graph, imagename, in_training_set)
+    }
+  }
+}
+```
+
+Each inner tuple contains:
+
+<ResponseField name="image" type="ndarray">
+  The raw image as a NumPy array.
+</ResponseField>
+
+<ResponseField name="scmap" type="ndarray">
+  Score map of shape `(H, W, num_bodyparts)`.
+</ResponseField>
+
+<ResponseField name="locref" type="ndarray">
+  Location-refinement field of shape `(H, W, num_bodyparts * 2)`.
+</ResponseField>
+
+<ResponseField name="paf" type="ndarray">
+  Part-affinity field of shape `(H, W, 2 * num_limbs)`, or `None` for models without PAFs.
+</ResponseField>
+
+<ResponseField name="bpt_names" type="list[str]">
+  Ordered list of body part names corresponding to the score map channels.
+</ResponseField>
+
+<ResponseField name="partaffinity_graph" type="list[tuple[int, int]]">
+  Limb graph as pairs of body-part indices.
+</ResponseField>
+
+<ResponseField name="imagename" type="str">
+  File path of the source image.
+</ResponseField>
+
+<ResponseField name="in_training_set" type="bool">
+  `True` if the image was part of the training split.
+</ResponseField>
+
+### Example
+
+```python
+import deeplabcut
+import matplotlib.pyplot as plt
+
+config = "/analysis/project/reaching-task/config.yaml"
+
+# Extract maps for training images 0 and 5
+maps = deeplabcut.extract_maps(config, shuffle=1, Indices=[0, 5])
+
+# Inspect a score map for the first image of the first fraction/snapshot
+frac = list(maps.keys())[0]
+snap = list(maps[frac].keys())[0]
+image, scmap, locref, paf, bpt_names, _, _, _ = maps[frac][snap][0]
+
+# Visualise the score map for the first body part
+plt.imshow(image)
+plt.imshow(scmap[..., 0], alpha=0.5, cmap="hot")
+plt.title(f"Score map: {bpt_names[0]}")
+plt.show()
+```
+
+You can also use the convenience visualization helpers exported from the top-level `deeplabcut` package:
+
+```python
+fig, ax = deeplabcut.visualize_scoremaps(image, scmap[..., 0])
+fig, ax = deeplabcut.visualize_locrefs(image, scmap[..., 0], locref[..., 0], locref[..., 1])
+
+if paf is not None:
+    fig, ax = deeplabcut.visualize_paf(image, paf)
+```

@@ -1,0 +1,423 @@
+---
+title: "Multi-animal tracking with DeepLabCut"
+description: "Track multiple animals with identity using maDLC: label with identity, train pose models, assemble tracklets, stitch tracks, and post-process results."
+---
+
+Multi-animal DeepLabCut (maDLC) extends the standard workflow with an assembly and tracking stage that links per-frame keypoint detections to specific individuals across time. The pipeline has four conceptual parts: annotate, train a pose estimation model, assemble and track detections, and post-process the resulting tracks.
+
+<Note>
+Use maDLC when your experiment contains **more than one animal** in the same camera view, or when you need individual identity in the output. If your animals are distinguishable from one another (e.g., different coat colors, tags) you can optionally enable supervised identity tracking (`identity: True` in `config.yaml`). If only one animal is ever present in the frame, use the [single-animal workflow](/guides/single-animal) instead — it is simpler and requires no assembly step.
+</Note>
+
+<Steps>
+
+<Step title="Create a multi-animal project">
+
+Pass `multianimal=True` to `create_new_project`. This writes additional fields (`individuals`, `multianimalbodyparts`, `uniquebodyparts`, `identity`) to `config.yaml`.
+
+```python
+import deeplabcut
+
+config_path = deeplabcut.create_new_project(
+    "SocialMice",
+    "YourName",
+    [
+        "/data/videos/mice1.mp4",
+        "/data/videos/mice2.mp4",
+    ],
+    working_directory="/data/projects",
+    copy_videos=False,
+    multianimal=True,
+)
+```
+
+Add videos at any time without recreating the project:
+
+```python
+deeplabcut.add_new_videos(
+    config_path,
+    ["/data/videos/mice3.mp4"],
+    copy_videos=False,
+)
+```
+
+</Step>
+
+<Step title="Configure the project">
+
+Open `config.yaml` and edit the multi-animal fields. You **must** define `individuals`, `multianimalbodyparts`, and optionally `uniquebodyparts` and `identity` before labeling.
+
+```yaml
+individuals:
+  - mouse1
+  - mouse2
+  - mouse3
+
+multianimalbodyparts:
+  - snout
+  - leftear
+  - rightear
+  - spine1
+  - spine2
+  - tailbase
+
+# Points that appear only once per frame (e.g., landmarks, objects)
+uniquebodyparts:
+  - corner_topleft
+  - corner_topright
+
+# Set to True only if animals are visually distinguishable and labeled consistently
+identity: false
+```
+
+**Guidelines:**
+- Set `individuals` to the **maximum** number of animals present in any single labeled frame.
+- More bodyparts improve assembly quality — label along the spine and tail even if those points are not of primary scientific interest.
+- `uniquebodyparts` are tracked like single-animal keypoints; they do not participate in multi-animal assembly.
+
+You can edit `config.yaml` programmatically:
+
+```python
+deeplabcut.auxiliaryfunctions.edit_config(
+    config_path,
+    {
+        "individuals": ["mouse1", "mouse2", "mouse3"],
+        "multianimalbodyparts": ["snout", "leftear", "rightear", "spine1", "spine2", "tailbase"],
+        "identity": False,
+    },
+)
+```
+
+</Step>
+
+<Step title="Extract frames">
+
+```python
+deeplabcut.extract_frames(
+    config_path,
+    mode="automatic",
+    algo="kmeans",
+    userfeedback=False,
+    crop=False,
+)
+```
+
+<Tip>
+For maDLC, manually include frames where animals are **closely interacting** — these are the hardest cases and are critical for training a good assembly model. Use `mode="manual"` to supplement automatic extraction with hand-picked interaction frames.
+</Tip>
+
+```python
+# Manually extract additional frames
+deeplabcut.extract_frames(config_path, "manual")
+```
+
+</Step>
+
+<Step title="Label frames">
+
+```python
+deeplabcut.label_frames(config_path)
+```
+
+The napari GUI opens in multi-animal mode. Each individual listed in `config.yaml` has its own set of keypoints in the **Points layer**.
+
+**Labeling identity rules:**
+- If animals are **distinguishable** (e.g., one black mouse, one white mouse): label consistently across all frames — always assign the black mouse to `mouse1`.
+- If animals are **indistinguishable**: identity can switch between frames; within a single frame, label consistently (all keypoints for the animal on the left as `mouse1`, for example).
+- Label **every individual present** in every frame. Do not skip occluded individuals entirely — just omit the specific occluded keypoints.
+
+**Key shortcuts:**
+
+| Key | Action |
+|-----|--------|
+| `2` | Labeling mode |
+| `3` | Selection mode |
+| `F` | Toggle between animal and bodypart color scheme |
+| `E` | Toggle edge coloring (red = low confidence in refinement mode) |
+| `Ctrl+S` | Save the current layer |
+
+</Step>
+
+<Step title="Check labels">
+
+```python
+deeplabcut.check_labels(config_path, visualizeindividuals=True)
+```
+
+Pass `visualizeindividuals=True` to color keypoints by individual rather than by bodypart type. Run twice (with `True` and `False`) to inspect both views. Verify that each individual's keypoints are correctly grouped before proceeding.
+
+</Step>
+
+<Step title="Create the training dataset">
+
+```python
+deeplabcut.create_training_dataset(config_path)
+```
+
+For multi-animal projects with the PyTorch engine, the default model includes both a pose estimation head and a part-affinity field (PAF) head that learns to associate keypoints across individuals. The configuration is written to `dlc-models-pytorch/iteration-0/shuffleX/train/pytorch_config.yaml`.
+
+```python
+# Specify a backbone explicitly
+deeplabcut.create_training_dataset(
+    config_path,
+    num_shuffles=1,
+    net_type="resnet_50",
+)
+```
+
+**Data augmentation notes:**
+- The PyTorch engine uses [Albumentations](https://albumentations.ai/docs/); edit `pytorch_config.yaml` after this step to customize.
+- Image cropping is part of the augmentation pipeline (default crop size: 400×400 px). Increase `crop_size` for high-resolution videos if GPU memory permits.
+- Crop sampling defaults to `hybrid` (balanced combination of `uniform` and `density` strategies).
+
+<Note>
+Run `create_training_dataset` on the machine where training will occur. If you label on one machine and train on another, transfer the full project folder first.
+</Note>
+
+</Step>
+
+<Step title="Train the network">
+
+```python
+deeplabcut.train_network(config_path, shuffle=1)
+```
+
+<Tabs>
+  <Tab title="PyTorch engine (recommended)">
+
+```python
+deeplabcut.train_network(
+    config_path,
+    shuffle=1,
+    trainingsetindex=0,
+    device="cuda:0",
+    max_snapshots_to_keep=5,
+    displayiters=100,
+    save_epochs=5,
+    epochs=200,
+)
+```
+
+Train until the loss plateaus — typically 100–250 epochs for PyTorch models. Pretrained backbone weights are downloaded automatically.
+
+  </Tab>
+  <Tab title="TensorFlow engine">
+
+```python
+deeplabcut.train_network(
+    config_path,
+    shuffle=1,
+    trainingsetindex=0,
+    gputouse=None,
+    max_snapshots_to_keep=5,
+    displayiters=100,
+    saveiters=15000,
+    maxiters=100000,
+    allow_growth=True,
+)
+```
+
+For multi-animal TensorFlow models, train for 20K–100K iterations (Adam optimizer, batch size 8). Lower `maxiters` and `saveiters` compared to single-animal defaults.
+
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step title="Evaluate the network">
+
+```python
+deeplabcut.evaluate_network(config_path, Shuffles=[1], plotting=True)
+```
+
+maDLC evaluation reports both **RMSE** (per-keypoint error) and **mAP/mAR** (mean average precision/recall for individual detection). Review plotted predictions with `plotting="individual"` to color results by animal:
+
+```python
+deeplabcut.evaluate_network(
+    config_path,
+    Shuffles=[1],
+    plotting="individual",
+)
+```
+
+Also inspect part-affinity field maps to verify the model has learned strong links between keypoints belonging to the same individual:
+
+```python
+deeplabcut.extract_save_all_maps(config_path, shuffle=1, Indices=[0, 5])
+```
+
+<Warning>
+Do not proceed to tracking until pose estimation quality is satisfactory. Poor evaluation metrics at this stage will compound into unreliable tracks. If results are insufficient, label additional frames — especially frames with close animal interactions — and retrain.
+</Warning>
+
+</Step>
+
+<Step title="Validate raw pose estimation on video">
+
+Before running full tracking, confirm that raw detections look correct on a test video:
+
+```python
+videos_to_analyze = ["/data/videos/test.mp4"]
+deeplabcut.analyze_videos(config_path, videos_to_analyze, videotype=".mp4")
+deeplabcut.create_video_with_all_detections(config_path, videos_to_analyze, videotype=".mp4")
+```
+
+This creates a `..._full.mp4` video showing all raw detections without assembly. Verify that keypoints are reliably detected before moving on to assembly and tracking.
+
+If raw detections are poor, extract additional frames for labeling:
+
+```python
+# Find frames with poor keypoint detections from the pickle output
+deeplabcut.find_outliers_in_raw_data(config_path, pickle_file, video_file)
+```
+
+</Step>
+
+<Step title="Analyze videos with auto-tracking">
+
+Once pose estimation quality is confirmed, analyze videos with full assembly and tracking in one call:
+
+```python
+deeplabcut.analyze_videos(
+    config_path,
+    ["/data/videos/"],
+    videotype=".mp4",
+    auto_track=True,
+)
+```
+
+With `auto_track=True`, `analyze_videos` chains pose estimation, assembly (`convert_detections2tracklets`), and tracklet stitching (`stitch_tracklets`) automatically using sensible defaults, writing the familiar `.h5` output file.
+
+**Advanced: run assembly and tracking steps manually**
+
+For finer control, set `auto_track=False` and run each step separately:
+
+```python
+# Step 1: pose estimation
+scorername = deeplabcut.analyze_videos(
+    config_path,
+    ["/data/videos/test.mp4"],
+    videotype=".mp4",
+    auto_track=False,
+)
+
+# Step 2: assemble detections into tracklets
+deeplabcut.convert_detections2tracklets(
+    config_path,
+    ["/data/videos/test.mp4"],
+    videotype=".mp4",
+    shuffle=1,
+    trainingsetindex=0,
+)
+
+# For identity-trained models, use identity cues instead of motion linking:
+# deeplabcut.convert_detections2tracklets(..., identity_only=True)
+```
+
+Tracking parameters (IoU threshold, max age, min hits) live in `inference_cfg.yaml` and can be tuned between iterations of `convert_detections2tracklets`.
+
+</Step>
+
+<Step title="Stitch tracklets into full tracks">
+
+```python
+deeplabcut.stitch_tracklets(
+    config_path,
+    ["/data/videos/test.mp4"],
+    videotype="mp4",
+    shuffle=1,
+    trainingsetindex=0,
+)
+```
+
+If the number of animals in the video differs from the number of `individuals` in `config.yaml`, specify it explicitly:
+
+```python
+deeplabcut.stitch_tracklets(
+    config_path,
+    ["/data/videos/test.mp4"],
+    videotype="mp4",
+    n_tracks=2,
+)
+```
+
+**Optional: unsupervised re-identification** to improve identity consistency using transformer-based reID:
+
+```python
+deeplabcut.transformer_reID(
+    config_path,
+    ["/data/videos/test.mp4"],
+    n_tracks=2,
+    videotype="mp4",
+)
+```
+
+</Step>
+
+<Step title="Refine tracklets">
+
+If you observe ID swaps or jittery detections, refine tracks interactively:
+
+```python
+deeplabcut.refine_tracklets(
+    config_path,
+    pickle_or_h5_file,
+    videofile_path,
+    max_gap=0,         # frames to fill in; 0 fills all gaps
+    min_swap_len=2,
+    min_tracklet_len=2,
+    trail_len=50,
+)
+```
+
+The GUI lets you correct ID swaps and adjust individual keypoint positions. After saving, an `.h5` file is written that can be filtered or refined again.
+
+<Note>
+Gap-filled frames are assigned likelihood `0.01`. Set `pcutoff=0` in `config.yaml` when creating labeled videos if you want to visualize filled frames.
+</Note>
+
+</Step>
+
+<Step title="Filter, plot, and create labeled videos">
+
+**Filter predictions:**
+
+```python
+deeplabcut.filterpredictions(
+    config_path,
+    ["/data/videos/test.mp4"],
+)
+```
+
+**Plot trajectories** — outputs coordinate, likelihood, and displacement plots to a `plot-poses/` folder:
+
+```python
+deeplabcut.plot_trajectories(
+    config_path,
+    ["/data/videos/test.mp4"],
+    filtered=True,
+)
+```
+
+**Create labeled video:**
+
+```python
+deeplabcut.create_labeled_video(
+    config_path,
+    ["/data/videos/test.mp4"],
+    videotype="mp4",
+    shuffle=1,
+    trainingsetindex=0,
+    filtered=True,
+    draw_skeleton=False,
+    trailpoints=0,
+    color_by="individual",  # color keypoints by individual identity
+    displayedindividuals="all",
+)
+```
+
+Set `pcutoff` in `config.yaml` to a high value (e.g., `0.8`) before creating videos to suppress low-confidence detections. If you used `refine_tracklets` to fill gaps, set `pcutoff=0` to show those frames.
+
+</Step>
+
+</Steps>

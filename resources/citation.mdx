@@ -1,0 +1,148 @@
+---
+title: "How to cite DeepLabCut in your research"
+description: "Recommended citations for DeepLabCut papers, with BibTeX entries and guidance on which papers to cite based on the features you use."
+---
+
+When you publish work that uses DeepLabCut, please cite the papers that correspond to the features you relied on. The table below maps features to the papers that introduced them, followed by BibTeX for each citation and a suggested Methods blurb.
+
+## Which papers to cite
+
+| What you used | Cite |
+|---|---|
+| DeepLabCut (any version) | Mathis et al., 2018 — *Nature Neuroscience* |
+| DeepLabCut Python package (v2.x+) | Nath & Mathis et al., 2019 — *Nature Protocols* |
+| MobileNetV2 or EfficientNet backbones | Mathis, Biasi et al., 2021 — *WACV 2021* |
+| Multi-animal DeepLabCut (v2.2+) | Lauer et al., 2022 — *Nature Methods* |
+| SuperAnimal pretrained models | Ye et al., 2024 — *Nature Communications* |
+
+If you are unsure whether a citation applies to your work, err on the side of including it. All five papers are open access.
+
+## Core papers
+
+### Mathis et al. 2018 — Nature Neuroscience
+
+The original DeepLabCut paper. Demonstrates markerless tracking of user-defined body parts using transfer learning from ImageNet-pretrained ResNets. Cite this paper for **any use** of DeepLabCut.
+
+DOI: [10.1038/s41593-018-0209-y](https://doi.org/10.1038/s41593-018-0209-y)
+
+```bibtex
+@article{Mathisetal2018,
+  title   = {DeepLabCut: markerless pose estimation of user-defined body parts with deep learning},
+  author  = {Alexander Mathis and Pranav Mamidanna and Kevin M. Cury and Taiga Abe
+             and Venkatesh N. Murthy and Mackenzie W. Mathis and Matthias Bethge},
+  journal = {Nature Neuroscience},
+  year    = {2018},
+  doi     = {10.1038/s41593-018-0209-y},
+  url     = {https://www.nature.com/articles/s41593-018-0209-y}
+}
+```
+
+### Nath & Mathis et al. 2019 — Nature Protocols
+
+Step-by-step protocol for using DeepLabCut 2.x for 2D and 3D markerless pose estimation across species and behaviors. Cite this paper when using the **DeepLabCut Python package** (v2.x or later).
+
+DOI: [10.1038/s41596-019-0176-0](https://doi.org/10.1038/s41596-019-0176-0)
+
+```bibtex
+@article{NathMathisetal2019,
+  title   = {Using DeepLabCut for 3D markerless pose estimation across species and behaviors},
+  author  = {Nath*, Tanmay and Mathis*, Alexander and Chen, An Chi and Patel, Amir
+             and Bethge, Matthias and Mathis, Mackenzie W},
+  journal = {Nature Protocols},
+  year    = {2019},
+  doi     = {10.1038/s41596-019-0176-0},
+  url     = {https://doi.org/10.1038/s41596-019-0176-0}
+}
+```
+
+### Mathis, Biasi et al. 2021 — WACV
+
+Introduces ImageNet pretraining for MobileNetV2 and EfficientNet backbones, with evidence that pretraining improves out-of-domain robustness. Cite this paper when using **MobileNetV2 or EfficientNet** architectures.
+
+```bibtex
+@InProceedings{Mathis_2021_WACV,
+  author    = {Mathis, Alexander and Biasi, Thomas and Schneider, Steffen
+               and Yuksekgonul, Mert and Rogers, Byron and Bethge, Matthias
+               and Mathis, Mackenzie W.},
+  title     = {Pretraining Boosts Out-of-Domain Robustness for Pose Estimation},
+  booktitle = {Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV)},
+  month     = {January},
+  year      = {2021},
+  pages     = {1859--1868}
+}
+```
+
+### Lauer et al. 2022 — Nature Methods
+
+Presents multi-animal DeepLabCut (maDLC), covering simultaneous pose estimation, identity tracking, and tracklet stitching for multiple animals. Cite this paper when using **multi-animal DeepLabCut** (v2.2+).
+
+DOI: [10.1038/s41592-022-01443-0](https://doi.org/10.1038/s41592-022-01443-0)
+
+```bibtex
+@article{Lauer2022MultianimalPE,
+  title   = {Multi-animal pose estimation, identification and tracking with DeepLabCut},
+  author  = {Jessy Lauer and Mu Zhou and Shaokai Ye and William Menegas and Steffen Schneider
+             and Tanmay Nath and Mohammed Mostafizur Rahman and Valentina Di Santo
+             and Daniel Soberanes and Guoping Feng and Venkatesh N. Murthy and George Lauder
+             and Catherine Dulac and M. Mathis and Alexander Mathis},
+  journal = {Nature Methods},
+  year    = {2022},
+  volume  = {19},
+  pages   = {496--504},
+  doi     = {10.1038/s41592-022-01443-0}
+}
+```
+
+### Ye et al. 2024 — Nature Communications
+
+Introduces SuperAnimal foundation models (`SuperAnimal-Quadruped` and `SuperAnimal-TopViewMouse`) pretrained on large cross-domain datasets for zero-shot and fine-tuned pose estimation. Cite this paper when using **SuperAnimal pretrained models**.
+
+DOI: [10.1038/s41467-024-48792-2](https://doi.org/10.1038/s41467-024-48792-2)
+
+```bibtex
+@article{Ye2024SuperAnimal,
+  title   = {SuperAnimal pretrained pose estimation models for behavioral analysis},
+  author  = {Shaokai Ye and Anastasiia Filippova and Jessy Lauer and Steffen Schneider
+             and Maxime Vidal and Tian Qiu and Alexander Mathis and Mackenzie W. Mathis},
+  journal = {Nature Communications},
+  year    = {2024},
+  volume  = {15},
+  doi     = {10.1038/s41467-024-48792-2}
+}
+```
+
+## Review and educational articles
+
+These are not required citations but may be useful for readers seeking broader context on animal pose estimation with deep learning.
+
+```bibtex
+@article{Mathis2020DeepLT,
+  title   = {Deep learning tools for the measurement of animal behavior in neuroscience},
+  author  = {Mackenzie W. Mathis and Alexander Mathis},
+  journal = {Current Opinion in Neurobiology},
+  year    = {2020},
+  volume  = {60},
+  pages   = {1--11}
+}
+
+@article{Mathis2020Primer,
+  title   = {A Primer on Motion Capture with Deep Learning: Principles, Pitfalls, and Perspectives},
+  author  = {Alexander Mathis and Steffen Schneider and Jessy Lauer and Mackenzie W. Mathis},
+  journal = {Neuron},
+  year    = {2020},
+  volume  = {108},
+  pages   = {44--65}
+}
+```
+
+## Suggested Methods section text
+
+Use or adapt the following template for your Methods section. Replace the placeholders (shown in angle brackets) with your actual values.
+
+> For body part tracking we used DeepLabCut (version `<X.X.X>`) [Mathis et al. 2018; Nath & Mathis et al. 2019]. Specifically, we labeled `<N>` frames taken from `<N>` videos/animals (`<N>`% used for training; default is 95%). We used a `<backbone>`-based neural network with default parameters for `<N>` training iterations. We validated with `<N>` shuffles and found the test error was `<X>` pixels (train: `<X>` pixels; image size `<W>` × `<H>`). We then used a p-cutoff of `<0.9>` to filter pose estimates for downstream analysis.
+
+If you changed any defaults in `pose_config.yaml` (e.g. the data loader, `pos_dist_threshold`, or optimizer), mention those modifications explicitly.
+
+<Note>
+  The DeepLabCut network graphic is freely available on [SciDraw.io](https://scidraw.io/drawing/290) if you need a figure-ready illustration. The DeepLabCut logo is also available for use in your work.
+</Note>

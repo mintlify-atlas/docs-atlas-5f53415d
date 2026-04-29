@@ -1,0 +1,85 @@
+---
+title: "DeepLabCut Model Zoo: pretrained pose models"
+description: "Run zero-shot animal pose estimation with SuperAnimal foundation models — no labeling or training required. Install, pick a model, and analyze your video."
+---
+
+The DeepLabCut Model Zoo is a collection of pretrained foundation models that estimate animal poses directly on new videos, without any labeling or model training on your part. If your animal and camera view match one of the supported model families, you can go from raw video to keypoint trajectories in a single Python call.
+
+<Tip>
+Use the Model Zoo when you want results quickly and your footage resembles the training data (quadruped side-view or top-view lab mouse). Train a custom model from scratch — or fine-tune a SuperAnimal model — when your animal, keypoint set, or camera angle is substantially different from what the pretrained models cover.
+</Tip>
+
+## What the Model Zoo provides
+
+The Model Zoo is four things in one:
+
+1. **Pretrained foundation models** trained on large, diverse datasets — use them as-is for zero-shot inference.
+2. **A community contribution platform** at [contrib.deeplabcut.org](https://contrib.deeplabcut.org/) where you can submit expert-labeled keypoints to improve future model versions.
+3. **No-install access** via [Google Colab](https://github.com/DeepLabCut/DeepLabCut/blob/main/examples/COLAB/COLAB_DEMO_SuperAnimal.ipynb), the [browser demo](https://contrib.deeplabcut.org/), or the [HuggingFace Space](https://huggingface.co/spaces/DeepLabCut/DeepLabCutModelZoo-SuperAnimals).
+4. **Transfer learning and fine-tuning** — start from a strong pretrained baseline and adapt to your specific data with minimal labeled frames.
+
+## Installation
+
+Install DeepLabCut with the `modelzoo` extra to pull in all Model Zoo dependencies:
+
+```bash
+pip install "deeplabcut[gui,modelzoo]"
+```
+
+## Available SuperAnimal model families
+
+<CardGroup cols={2}>
+  <Card title="SuperAnimal-Quadruped" icon="paw">
+    Side-view pose estimation for a wide range of quadruped species — horses, dogs, sheep, rodents, elephants, and more. Uses 39 keypoints covering the full body including head, limbs, and tail.
+  </Card>
+  <Card title="SuperAnimal-TopViewMouse" icon="microscope">
+    Top-down pose estimation for lab mice recorded from above — the standard view in many freely-moving behavioral assays. Uses 27 keypoints covering the full body and tail.
+  </Card>
+</CardGroup>
+
+Each family ships with multiple model variants that trade off speed against accuracy:
+
+| Model identifier | Architecture | Engine | Notes |
+|---|---|---|---|
+| `superanimal_quadruped_hrnetw32` | HRNet-W32 (top-down) | PyTorch | Paired with a Faster-RCNN detector; recommended |
+| `superanimal_quadruped_dlcrnet` | DLCRNet (bottom-up) | TensorFlow | Faster, but more error-prone |
+| `superanimal_topviewmouse_hrnetw32` | HRNet-W32 (top-down) | PyTorch | Paired with a Faster-RCNN detector; recommended |
+| `superanimal_topviewmouse_dlcrnet` | DLCRNet (bottom-up) | TensorFlow | Faster, but more error-prone |
+
+<Note>
+The bare names `superanimal_quadruped` and `superanimal_topviewmouse` (without a model suffix) are deprecated aliases for the `_dlcrnet` variants. Use the explicit suffixed names going forward.
+</Note>
+
+## Quick start: run inference on a video
+
+```python
+import deeplabcut
+
+deeplabcut.video_inference_superanimal(
+    videos=["my_video.mp4"],
+    superanimal_name="superanimal_quadruped",
+    model_name="hrnet_w32",
+    detector_name="fasterrcnn_resnet50_fpn_v2",
+    video_adapt=False,
+)
+```
+
+Model weights are downloaded automatically to `modelzoo/checkpoints` the first time you run a given model — no manual download step is needed.
+
+### What the output looks like
+
+`video_inference_superanimal` writes results alongside your video file:
+
+- **`.h5` / `.json`** — keypoint coordinates and confidence scores for every frame and individual
+- **Labeled video** — an MP4 with keypoints overlaid (created by default; disable with `create_labeled_video=False`)
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="SuperAnimal model details" icon="layer-group" href="/modelzoo/superanimal-models">
+    Keypoint lists, model variants, video adaptation, and fine-tuning instructions for each model family.
+  </Card>
+  <Card title="Single-animal workflow" icon="paw" href="/guides/single-animal">
+    Train a custom model from scratch when the pretrained models do not fit your use case.
+  </Card>
+</CardGroup>

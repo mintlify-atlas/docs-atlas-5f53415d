@@ -1,0 +1,242 @@
+---
+title: "3D pose estimation with stereo cameras"
+description: "Reconstruct 3D animal poses from two synchronized cameras using DeepLabCut's built-in calibration, triangulation, and visualization pipeline."
+---
+
+DeepLabCut supports 3D pose reconstruction from two synchronized cameras. After you have 2D pose estimates from each camera view, the built-in stereo calibration and triangulation pipeline converts those 2D coordinates into full 3D trajectories. This page walks through the complete workflow from creating a 3D project to producing labeled 3D videos.
+
+<Warning>
+  3D pose estimation requires completed 2D analysis first. You must have a trained DeepLabCut network and have run `deeplabcut.analyze_videos()` on the synchronized camera pair before starting the 3D workflow. The 3D pipeline calls `analyze_videos()` automatically if 2D output files are missing, but it is faster and more reliable to run 2D analysis explicitly beforehand.
+</Warning>
+
+## Requirements
+
+Before starting, ensure you have:
+
+- **Two synchronized cameras** in a stereo configuration
+- **A printed checkerboard** for calibration (at least 8×6 squares, mounted flat on a rigid surface)
+- **Calibration image pairs** — 30–70 matched `.jpg` files named `camera-1-01.jpg` / `camera-2-01.jpg`, etc.
+- A completed 2D DeepLabCut project with trained network(s) covering both camera views
+
+<Note>
+  DeepLabCut's built-in 3D support covers exactly two cameras. For three or more cameras, consider [anipose](https://anipose.readthedocs.io/en/latest/) (`pip install anipose` into your DLC environment) or [AcinoSet](https://github.com/African-Robotics-Unit/AcinoSet).
+</Note>
+
+## Workflow
+
+<Steps>
+  <Step title="Create a 3D project">
+    Create a dedicated 3D project directory. Each 3D project corresponds to a specific camera rig and set of calibration images.
+
+    ```python
+    import deeplabcut
+
+    config_path3d = deeplabcut.create_new_project_3d(
+        "ProjectName",
+        "NameofLabeler",
+        num_cameras=2,
+    )
+    ```
+
+    You can also specify a custom working directory:
+
+    ```python
+    config_path3d = deeplabcut.create_new_project_3d(
+        "ProjectName",
+        "NameofLabeler",
+        num_cameras=2,
+        working_directory="/path/to/your/projects",
+    )
+    ```
+
+    This creates a project folder named `ProjectName-NameofLabeler-<date>-3d` containing four subdirectories:
+
+    | Directory | Purpose |
+    |---|---|
+    | `calibration_images/` | Place your checkerboard image pairs here |
+    | `camera_matrix/` | Stores computed intrinsic/extrinsic parameters and `stereo_params.pickle` |
+    | `corners/` | Detected checkerboard corner patterns (color-coded by row) |
+    | `undistortion/` | Undistorted calibration images for quality inspection |
+
+    After creating the project, open its `config.yaml` file and set the camera names (e.g. `camera-1`, `camera-2`). **Do not change the camera names after calibration.**
+  </Step>
+
+  <Step title="Capture and place calibration images">
+    Take paired checkerboard images from both cameras simultaneously and place them in the `calibration_images/` directory. File names must follow the pattern:
+
+    ```
+    camera-1-01.jpg   camera-2-01.jpg
+    camera-1-02.jpg   camera-2-02.jpg
+    ...
+    ```
+
+    Tips for good calibration images:
+
+    - Cover several distances and all corners/center of the frame at each distance
+    - Keep checkerboard orientation consistent — avoid rotating it more than 30 degrees within a session
+    - Aim for 30–70 image pairs (some may be discarded during corner detection)
+    - Use a board with at least 8×6 squares; larger is better
+
+    If you have video footage instead of still images, extract frames with `ffmpeg`:
+
+    ```bash
+    ffmpeg -i videoname.mp4 -vframes 20 camera-1-%03d.jpg
+    ```
+  </Step>
+
+  <Step title="Calibrate cameras">
+    Run camera calibration in two passes. First, set `calibrate=False` to detect corners and inspect the results without committing to calibration:
+
+    ```python
+    deeplabcut.calibrate_cameras(
+        config_path3d,
+        cbrow=8,
+        cbcol=6,
+        calibrate=False,
+        alpha=0.9,
+    )
+    ```
+
+    The `cbrow` and `cbcol` parameters count the **internal corners** (edges between squares), not the squares themselves. For a board with 8×8 squares, use `cbrow=7, cbcol=7`.
+
+    Inspect the corner detection output in the `corners/` directory. Remove any image pairs where corners are missing, out of order, or incorrectly detected — these will reduce calibration accuracy.
+
+    Once you are satisfied with the remaining image pairs, run the full calibration:
+
+    ```python
+    deeplabcut.calibrate_cameras(
+        config_path3d,
+        cbrow=8,
+        cbcol=6,
+        calibrate=True,
+        alpha=0.9,
+    )
+    ```
+
+    This computes intrinsic and extrinsic parameters for each camera, performs stereo calibration, and saves `stereo_params.pickle` in `camera_matrix/`. A reprojection error is printed — lower is better.
+
+    <Note>
+      `alpha=0` returns undistorted images with minimum black borders (some edge pixels are cropped). `alpha=1` retains all pixels but adds black borders. `alpha=0.9` is a reasonable default.
+    </Note>
+  </Step>
+
+  <Step title="Check undistortion quality">
+    Verify calibration quality by undistorting the calibration images and checking whether the corner points align correctly after undistortion:
+
+    ```python
+    deeplabcut.check_undistortion(config_path3d, cbrow=8, cbcol=6)
+    ```
+
+    Undistorted images and overlaid corner points are saved to the `undistortion/` directory. Inspect the output plots — all undistorted corner points across all images are triangulated and displayed together. If the points scatter widely or do not form a coherent grid, revisit your calibration images and repeat steps 3 and 4.
+  </Step>
+
+  <Step title="Triangulate 2D poses to 3D">
+    Once calibration looks good, triangulate your 2D pose data into 3D coordinates. Video file names must contain the camera names defined in `config.yaml`:
+
+    ```
+    rig-mouse-day1-camera-1.avi   rig-mouse-day1-camera-2.avi
+    ```
+
+    The pair is matched by requiring identical file names except for the camera name string.
+
+    Edit the 3D project `config.yaml` to point to your 2D DeepLabCut project(s), ensuring that the bodypart names match exactly.
+
+    Then run triangulation:
+
+    ```python
+    deeplabcut.triangulate(
+        config_path3d,
+        "/path/to/video/folder",
+        filterpredictions=True,
+    )
+    ```
+
+    Key parameters:
+
+    | Parameter | Default | Description |
+    |---|---|---|
+    | `filterpredictions` | `True` | Apply a median filter to 2D predictions before triangulation |
+    | `filtertype` | `"median"` | Filter type: `"median"` or `"arima"` |
+    | `videotype` | `".avi"` | Video file extension to search for |
+    | `save_as_csv` | `False` | Also save output as a `.csv` file |
+    | `destfolder` | `None` | Output directory (defaults to video folder) |
+    | `gputouse` | `None` | GPU index for 2D inference if not yet analyzed |
+
+    The triangulated output file (ending in `yourDLC_3D_scorername.h5`) is saved in the video folder or `destfolder`.
+
+    <Tip>
+      On Windows, use raw strings for paths: `r"C:\Users\name\videofolder"` or double backslashes: `"C:\\Users\\name\\videofolder"`.
+    </Tip>
+  </Step>
+
+  <Step title="Create labeled 3D videos">
+    Generate a visualization that shows both 2D camera views with tracked keypoints alongside a 3D plot of the reconstructed pose:
+
+    ```python
+    deeplabcut.create_labeled_video_3d(
+        config_path3d,
+        ["path/to/triangulated_file_folder"],
+        start=50,
+        end=250,
+    )
+    ```
+
+    The `start` and `end` parameters are frame indices. Because 3D videos are large files, it is practical to visualize only a subset of frames.
+
+    You can control the 3D view and axis limits:
+
+    ```python
+    deeplabcut.create_labeled_video_3d(
+        config_path3d,
+        ["path/to/triangulated_file_folder"],
+        start=50,
+        end=250,
+        view=[113, 270],   # [elevation, azimuth] angles
+        xlim=[-200, 200],
+        ylim=[-200, 200],
+        zlim=[0, 400],
+        trailpoints=5,     # show last 5 frames as a trail
+        draw_skeleton=True,
+    )
+    ```
+
+    Additional parameters:
+
+    | Parameter | Default | Description |
+    |---|---|---|
+    | `view` | `[113, 270]` | Elevation and azimuth of the 3D axes |
+    | `xlim` | `[None, None]` | x-axis limits (auto if None) |
+    | `ylim` | `[None, None]` | y-axis limits (auto if None) |
+    | `zlim` | `[None, None]` | z-axis limits (auto if None) |
+    | `trailpoints` | `0` | Number of previous frames to display as a trail |
+    | `draw_skeleton` | `True` | Draw skeleton lines between bodyparts |
+    | `color_by` | `"bodypart"` | Color points by `"bodypart"` or `"individual"` |
+    | `fps` | `30` | Output video frame rate |
+    | `dpi` | `300` | Output resolution |
+
+    <Tip>
+      The video is assembled from `.png` frames written to a temporary directory, so you can open the first frame immediately after starting the command. If the view angle is not right, press `Ctrl+C`, adjust `view`, `xlim`, `ylim`, or `zlim`, and restart.
+    </Tip>
+  </Step>
+</Steps>
+
+## Multi-animal 3D projects
+
+Single-animal and multi-animal (maDLC) DeepLabCut projects are both supported for 3D reconstruction. For multi-animal projects, set `track_method` in the `triangulate()` call:
+
+```python
+deeplabcut.triangulate(
+    config_path3d,
+    "/path/to/video/folder",
+    filterpredictions=True,
+    track_method="ellipse",  # or "box"
+)
+```
+
+## Extended camera support
+
+For more than two cameras, use one of these DeepLabCut-compatible tools:
+
+- **[anipose](https://anipose.readthedocs.io/en/latest/)** — multi-camera wrapper for DeepLabCut, install with `pip install anipose`
+- **[AcinoSet](https://github.com/African-Robotics-Unit/AcinoSet)** — n-camera triangulation with extended Kalman filtering and trajectory optimization
+- **[Argus / DLTdv](https://github.com/backyardbiomech/DLCconverterDLT)** — wand calibration workflow with direct DeepLabCut import/export

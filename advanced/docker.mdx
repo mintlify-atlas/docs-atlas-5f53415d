@@ -1,0 +1,204 @@
+---
+title: "Running DeepLabCut in Docker containers"
+description: "Use official DeepLabCut Docker images for a dependency-free setup with GPU support, Jupyter notebooks, and volume-mounted data directories."
+---
+
+DeepLabCut provides official Docker images on [DockerHub](https://hub.docker.com/r/deeplabcut/deeplabcut) as an alternative to a manual conda or pip installation. The containers ship all required dependencies pre-installed, including PyTorch and CUDA, so you can run DeepLabCut on any machine that has Docker without touching your existing Python environment.
+
+<Note>
+  The napari-deeplabcut labelling GUI cannot be run inside a Docker container. For labelling, install it directly on your host machine with `pip install napari-deeplabcut`.
+</Note>
+
+## Available images
+
+Three image variants are published for each DeepLabCut release and CUDA version:
+
+| Image tag pattern | Contents |
+|---|---|
+| `deeplabcut/deeplabcut:<DLC_VERSION>-base-cuda<CUDA_VERSION>-cudnn9` | Base image with DeepLabCut installed |
+| `deeplabcut/deeplabcut:<DLC_VERSION>-core-cuda<CUDA_VERSION>-cudnn9` | DeepLabCut in light mode (no GUI dependencies) |
+| `deeplabcut/deeplabcut:<DLC_VERSION>-jupyter-cuda<CUDA_VERSION>-cudnn9` | DeepLabCut with Jupyter pre-installed |
+
+All images ship Python 3.11. Images are built for CUDA 11.8 and CUDA 12.x releases.
+
+## Quick start with `deeplabcut-docker`
+
+The `deeplabcut-docker` helper package wraps `docker run` with sensible defaults — your current directory is mounted automatically and the container runs as your host user rather than root.
+
+Install the helper:
+
+```bash
+pip install deeplabcut-docker
+```
+
+This only installs the thin wrapper script; it does not install DeepLabCut or any of its dependencies on your host machine.
+
+### Terminal mode
+
+Open an interactive shell with DeepLabCut in light mode:
+
+```bash
+deeplabcut-docker bash
+```
+
+To use GPUs for model training, pass `--gpus all`:
+
+```bash
+deeplabcut-docker bash --gpus all
+```
+
+Verify the installation inside the container:
+
+```bash
+ipython
+>>> import deeplabcut
+```
+
+### Jupyter Notebook mode
+
+Start a Jupyter notebook server:
+
+```bash
+deeplabcut-docker notebook
+```
+
+Open `http://127.0.0.1:8888` in your browser. When prompted for a password, enter `deeplabcut`. The image includes the full DeepLabCut GUI package, equivalent to `pip install deeplabcut[gui]`.
+
+With GPU support:
+
+```bash
+deeplabcut-docker notebook --gpus all
+```
+
+## Mounting data volumes
+
+By default `deeplabcut-docker` mounts your current working directory into the container. To mount additional directories, pass `-v` flags exactly as you would with `docker run`:
+
+```bash
+# Read/write access to a project directory
+deeplabcut-docker bash --gpus all -v /home/mackenzie/DEEPLABCUT:/home/mackenzie/DEEPLABCUT
+
+# Read-only access
+deeplabcut-docker bash -v /home/mackenzie/DEEPLABCUT:/home/mackenzie/DEEPLABCUT:ro
+```
+
+The path format is `host_path:container_path` (or `host_path:container_path:ro` for read-only).
+
+## Selecting a specific version
+
+Use the `DLC_VERSION` and `CUDA_VERSION` environment variables to control which image is pulled:
+
+```bash
+DLC_VERSION=3.0.0 CUDA_VERSION=12.1 deeplabcut-docker bash --gpus all
+```
+
+## Running Jupyter on a remote server
+
+When DeepLabCut runs on a remote machine, use SSH port forwarding to access the notebook in your local browser:
+
+```bash
+# 1. Connect to your server with port forwarding
+ssh -L localhost:8890:localhost:8889 you@your-server-ip
+
+# 2. On the remote server, launch the container
+DLC_NOTEBOOK_PORT=8889 deeplabcut-docker notebook --gpus all
+
+# 3. Open http://127.0.0.1:8890 in your local browser
+```
+
+## Using images directly with `docker run`
+
+Advanced users can pull and run images without `deeplabcut-docker`:
+
+```bash
+# Pull the core image
+docker pull deeplabcut/deeplabcut:3.0.0-core-cuda11.8-cudnn9
+
+# Run interactively with GPU access
+docker run -it --rm --gpus all deeplabcut/deeplabcut:3.0.0-core-cuda11.8-cudnn9
+```
+
+For the Jupyter image, you need to run the container as a non-root user. The recommended approach is to build a thin wrapper image:
+
+```dockerfile
+FROM deeplabcut/deeplabcut:3.0.0-jupyter-cuda11.8-cudnn9
+ARG UID
+ARG GID
+ARG UNAME
+ARG GNAME
+
+RUN mkdir -p /home
+RUN mkdir -p /app
+RUN groupadd -g ${GID} ${GNAME} || groupmod -o -g ${GID} ${GNAME}
+RUN useradd -d /home -s /bin/bash -u ${UID} -g ${GID} ${UNAME}
+RUN chown -R ${UNAME}:${GNAME} /home
+RUN chown -R ${UNAME}:${GNAME} /app
+WORKDIR /app
+USER ${UNAME}
+```
+
+Build and run:
+
+```bash
+docker build \
+  --build-arg UID=$(id -u) \
+  --build-arg GID=$(id -g) \
+  --build-arg UNAME=$(id -un) \
+  --build-arg GNAME=$(id -gn) \
+  -t my-dlc-image \
+  .
+
+docker run -p 127.0.0.1:8889:8888 -it --rm --gpus all my-dlc-image
+```
+
+## Installing Docker
+
+If Docker is not yet installed:
+
+<Steps>
+  <Step title="Install Docker">
+    Follow the official instructions at [docs.docker.com/install](https://docs.docker.com/install/). For Ubuntu, see the [Ubuntu-specific guide](https://docs.docker.com/install/linux/docker-ce/ubuntu/).
+
+    Test your installation:
+
+    ```bash
+    sudo docker run hello-world
+    ```
+
+    The output should include: `Hello from Docker! This message shows that your installation appears to be working correctly.`
+  </Step>
+
+  <Step title="Add your user to the docker group">
+    Running Docker commands without `sudo` requires membership in the `docker` group:
+
+    ```bash
+    sudo groupadd docker
+    sudo usermod -aG docker $USER
+    ```
+
+    Log out and back in (or restart your computer) for the group change to take effect.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+**`docker: Error response from daemon: Unknown runtime specified nvidia`**
+
+Restart the Docker daemon:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+```
+
+**Container does not see your GPU**
+
+Make sure you have the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed and pass `--gpus all` when starting the container.
+
+**Linux: container cannot connect to display**
+
+Run `host +local:docker` before starting the image with `deeplabcut-docker`.
+
+<Note>
+  The `deeplabcut-docker` helper is tested primarily on Unix systems. If you encounter issues, please open a GitHub issue in the DeepLabCut repository with your OS and Docker version.
+</Note>

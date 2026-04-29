@@ -1,0 +1,462 @@
+---
+title: "Project management API — create and configure projects"
+description: "Functions for creating, configuring, and extending DeepLabCut projects, including standard, 3D, and model zoo pretrained project types."
+---
+
+DeepLabCut projects are self-contained directories that hold your videos, labeled frames, training datasets, and model checkpoints. The functions below create and configure these project directories, register videos, and optionally initialize them with pretrained weights from the DeepLabCut Model Zoo.
+
+---
+
+## create\_new\_project
+
+Creates a new single-animal or multi-animal DeepLabCut project directory, populates the standard sub-directory layout (`videos/`, `labeled-data/`, `training-datasets/`, `dlc-models/`), and writes a `config.yaml` file pre-filled with sensible defaults.
+
+```python
+deeplabcut.create_new_project(
+    project,
+    experimenter,
+    videos,
+    working_directory=None,
+    copy_videos=False,
+    videotype="",
+    multianimal=False,
+    individuals=None,
+)
+```
+
+<ParamField path="project" type="string" required>
+  Name of the project. Combined with `experimenter` and today's date to form the project directory name (e.g. `reaching-task-Linus-2024-05-01`).
+</ParamField>
+
+<ParamField path="experimenter" type="string" required>
+  Name of the experimenter. Becomes part of the project directory name and is recorded as the scorer in all annotation files.
+</ParamField>
+
+<ParamField path="videos" type="list[string]" required>
+  Full paths to video files to register with the project. Each entry may be a path to a single video file **or** a directory; when a directory is given, all files whose extension matches `videotype` are collected automatically.
+</ParamField>
+
+<ParamField path="working_directory" type="string" default="current working directory">
+  Directory in which the project folder will be created. Defaults to the current working directory when `None`.
+</ParamField>
+
+<ParamField path="copy_videos" type="boolean" default="False">
+  When `True` the video files are copied into `project/videos/`. When `False` (default) symbolic links are created instead. On Windows or exFAT volumes where symlinks are unavailable the files are copied automatically.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  File extension filter used when a directory is passed in `videos` (e.g. `".mp4"`). Videos whose names do not end with this string are ignored. Has no effect when individual file paths are given.
+</ParamField>
+
+<ParamField path="multianimal" type="boolean" default="False">
+  Set to `True` to create a multi-animal project (DLC 2.2+). This switches the config template and default network to `dlcrnet_ms5`.
+</ParamField>
+
+<ParamField path="individuals" type="list[string]" default='["individual1", "individual2", "individual3"]'>
+  Only used when `multianimal=True`. Lists the individual identifiers written into `config.yaml`. Defaults to three placeholder names.
+</ParamField>
+
+<ResponseField name="config_path" type="string">
+  Absolute path to the newly created `config.yaml` file. Returns `"nothingcreated"` if no valid videos were found.
+</ResponseField>
+
+### Examples
+
+```python
+import deeplabcut
+
+# Linux / macOS — specify a working directory
+config_path = deeplabcut.create_new_project(
+    project="reaching-task",
+    experimenter="Linus",
+    videos=[
+        "/data/videos/mouse1.avi",
+        "/data/videos/mouse2.avi",
+    ],
+    working_directory="/analysis/project/",
+)
+
+# Scan a directory for .mp4 files
+config_path = deeplabcut.create_new_project(
+    project="openfield",
+    experimenter="Linus",
+    videos=["/data/videos"],
+    videotype=".mp4",
+)
+
+# Windows — copy videos into the project folder
+config_path = deeplabcut.create_new_project(
+    "reaching-task",
+    "Bill",
+    [r"C:\yourusername\rig-95\Videos\reachingvideo1.avi"],
+    copy_videos=True,
+)
+
+# Multi-animal project with custom individual names
+config_path = deeplabcut.create_new_project(
+    project="social-task",
+    experimenter="Ana",
+    videos=["/data/social/"],
+    videotype=".avi",
+    multianimal=True,
+    individuals=["mouseA", "mouseB"],
+)
+```
+
+---
+
+## create\_new\_project\_3d
+
+Creates a 3D DeepLabCut project. The directory layout includes `camera_matrix/`, `calibration_images/`, `undistortion/`, `corners/`, and `removed_calibration_images/`. The produced `config.yaml` lists one config path entry per camera.
+
+```python
+deeplabcut.create_new_project_3d(
+    project,
+    experimenter,
+    num_cameras=2,
+    working_directory=None,
+)
+```
+
+<ParamField path="project" type="string" required>
+  Name of the 3D project. The project folder is suffixed with `-3d` (e.g. `reaching-task-Linus-2024-05-01-3d`).
+</ParamField>
+
+<ParamField path="experimenter" type="string" required>
+  Name of the experimenter.
+</ParamField>
+
+<ParamField path="num_cameras" type="integer" default="2">
+  Number of cameras used for 3D reconstruction. The config file will include `num_cameras` placeholder entries for per-camera 2D project configs.
+</ParamField>
+
+<ParamField path="working_directory" type="string" default="current working directory">
+  Directory in which the 3D project folder will be created.
+</ParamField>
+
+<ResponseField name="config_path" type="string">
+  Absolute path to the newly created 3D `config.yaml` file.
+</ResponseField>
+
+### Example
+
+```python
+import deeplabcut
+
+# Two-camera 3D project
+config_path_3d = deeplabcut.create_new_project_3d(
+    "reaching-task",
+    "Linus",
+    num_cameras=2,
+)
+
+# Four-camera 3D project in a specific directory
+config_path_3d = deeplabcut.create_new_project_3d(
+    "reaching-task",
+    "Bill",
+    num_cameras=4,
+    working_directory="/analysis/3d-projects/",
+)
+```
+
+---
+
+## add\_new\_videos
+
+Adds one or more new videos to an existing project at any stage. Registers the videos in `config.yaml`, creates the corresponding `labeled-data/<video_stem>/` directories, and optionally runs frame extraction immediately.
+
+```python
+deeplabcut.add_new_videos(
+    config,
+    videos,
+    copy_videos=False,
+    coords=None,
+    extract_frames=False,
+)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the project `config.yaml` file.
+</ParamField>
+
+<ParamField path="videos" type="list[string]" required>
+  Full paths to the video files to add. A single string is also accepted and converted to a one-element list automatically.
+</ParamField>
+
+<ParamField path="copy_videos" type="boolean" default="False">
+  When `True` the video files are copied into the project `videos/` directory. When `False` (default) symbolic links are created.
+</ParamField>
+
+<ParamField path="coords" type="list[list[int]]" default="None">
+  Optional list of cropping rectangles, one per video. Each rectangle is `[x1, x2, y1, y2]`. When `None`, the full frame bounding box is used.
+</ParamField>
+
+<ParamField path="extract_frames" type="boolean" default="False">
+  When `True`, `extract_frames` is called automatically on each newly added video using default settings.
+</ParamField>
+
+### Examples
+
+```python
+import deeplabcut
+
+config = "/home/project/reaching-task-Tanmay-2018-08-23/config.yaml"
+
+# Add a single video using auto-detected crop dimensions
+deeplabcut.add_new_videos(config, ["/data/videos/mouse5.avi"])
+
+# Add a video with explicit crop coordinates [x1, x2, y1, y2]
+deeplabcut.add_new_videos(
+    config,
+    ["/data/videos/mouse5.avi"],
+    copy_videos=False,
+    coords=[[0, 100, 0, 200]],
+)
+
+# Add two videos with individual crop coordinates
+deeplabcut.add_new_videos(
+    config,
+    ["/data/videos/mouse5.avi", "/data/videos/mouse6.avi"],
+    copy_videos=False,
+    coords=[[0, 100, 0, 200], [0, 100, 0, 250]],
+)
+```
+
+---
+
+## load\_demo\_data
+
+Loads the bundled DeepLabCut demo dataset (a subset of the trail-tracking data from Mathis et al. 2018), corrects absolute paths in the config to match the current machine, and optionally creates a ready-to-train training dataset.
+
+```python
+deeplabcut.load_demo_data(
+    config,
+    createtrainingset=True,
+    engine=Engine.PYTORCH,
+)
+```
+
+<ParamField path="config" type="string" required>
+  Full path to the `config.yaml` of the demo project. The demo projects ship inside the DeepLabCut package under `examples/`.
+</ParamField>
+
+<ParamField path="createtrainingset" type="boolean" default="True">
+  When `True` (default), calls `create_training_dataset` after loading so the project is immediately ready for `train_network`.
+</ParamField>
+
+<ParamField path="engine" type="Engine" default="Engine.PYTORCH">
+  Backend engine used when creating the training dataset. Pass `deeplabcut.Engine.TF` to generate TensorFlow-compatible configs.
+</ParamField>
+
+### Example
+
+```python
+import deeplabcut
+
+# Load the reaching-task demo and create a training dataset
+deeplabcut.load_demo_data("examples/Reaching-Mackenzie-2018-08-30/config.yaml")
+
+# Load without creating a training dataset
+deeplabcut.load_demo_data(
+    "examples/Reaching-Mackenzie-2018-08-30/config.yaml",
+    createtrainingset=False,
+)
+```
+
+---
+
+## create\_pretrained\_project
+
+Creates a new project and initializes it with pretrained weights from the [DeepLabCut Model Zoo](http://modelzoo.deeplabcut.org). Optionally analyzes the provided videos and produces labeled output videos.
+
+```python
+deeplabcut.create_pretrained_project(
+    project,
+    experimenter,
+    videos,
+    model=None,
+    working_directory=None,
+    copy_videos=False,
+    videotype="",
+    analyzevideo=True,
+    filtered=True,
+    createlabeledvideo=True,
+    trainFraction=None,
+    engine=Engine.PYTORCH,
+    multi_animal=False,
+    individuals=None,
+    net_name=None,
+    detector_name=None,
+)
+```
+
+<ParamField path="project" type="string" required>
+  Name of the project.
+</ParamField>
+
+<ParamField path="experimenter" type="string" required>
+  Name of the experimenter.
+</ParamField>
+
+<ParamField path="videos" type="list[string]" required>
+  Full paths to the video files to include in the project.
+</ParamField>
+
+<ParamField path="model" type="string" default="None">
+  Name of the Model Zoo dataset or model to use. For the PyTorch engine the default is `"superanimal_quadruped"`; for the TensorFlow engine the default is `"full_human"`. Call `dlclibrary.dlcmodelzoo.modelzoo_download.get_available_datasets()` to list all available options.
+</ParamField>
+
+<ParamField path="working_directory" type="string" default="current working directory">
+  Directory where the project folder will be created.
+</ParamField>
+
+<ParamField path="copy_videos" type="boolean" default="False">
+  When `True`, copies videos rather than symlinking them. Recommended on Windows.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  Extension filter for videos when a directory is passed (e.g. `".mp4"`).
+</ParamField>
+
+<ParamField path="analyzevideo" type="boolean" default="True">
+  When `True` the provided videos are analyzed with the downloaded pretrained weights and a labeled video is generated.
+</ParamField>
+
+<ParamField path="filtered" type="boolean" default="True">
+  When `True` filtered (smoothed) pose predictions are used for the labeled video. Requires `filterpredictions` to have been run; this is called automatically when `analyzevideo=True`.
+</ParamField>
+
+<ParamField path="createlabeledvideo" type="boolean" default="True">
+  When `True` an annotated video is rendered using `create_labeled_video`.
+</ParamField>
+
+<ParamField path="trainFraction" type="float" default="None">
+  Training fraction written to `config.yaml`. Defaults to `0.95` when `None`.
+</ParamField>
+
+<ParamField path="engine" type="Engine" default="Engine.PYTORCH">
+  Backend engine. Use `deeplabcut.Engine.TF` for TensorFlow-based Model Zoo weights.
+</ParamField>
+
+<ParamField path="multi_animal" type="boolean" default="False">
+  When `True` creates a multi-animal project. Only supported for the PyTorch engine.
+</ParamField>
+
+<ParamField path="individuals" type="list[string]" default="None">
+  Individual names. Only used when `multi_animal=True`.
+</ParamField>
+
+<ParamField path="net_name" type="string" default="None">
+  PyTorch engine only. Name of the pose backbone. Defaults to `"hrnet_w32"` when `None`.
+</ParamField>
+
+<ParamField path="detector_name" type="string" default="None">
+  PyTorch engine only. Name of the detector. Defaults to `"fasterrcnn_resnet50_fpn_v2"` when `None`. Only relevant for top-down model architectures.
+</ParamField>
+
+<ResponseField name="result" type="tuple[string, string]">
+  A tuple of `(config_path, train_config_path)` — the paths to the project `config.yaml` and the model's training config file.
+</ResponseField>
+
+### Examples
+
+```python
+import deeplabcut
+
+# Default SuperAnimal quadruped model (PyTorch) with video analysis
+deeplabcut.create_pretrained_project(
+    "quadruped-study",
+    "Linus",
+    ["/data/videos/homosapiens1.avi"],
+    copy_videos=False,
+)
+
+# Load a specific dataset
+deeplabcut.create_pretrained_project(
+    "cat-study",
+    "Linus",
+    ["/data/videos/felixfeliscatus3.avi"],
+    model="full_cat",
+    engine=deeplabcut.Engine.TF,
+)
+
+# Windows — copy videos and skip video analysis
+deeplabcut.create_pretrained_project(
+    "reaching-study",
+    "Bill",
+    [r"C:\yourusername\rig-95\Videos\reachingvideo1.avi"],
+    working_directory=r"C:\yourusername\analysis\project",
+    copy_videos=True,
+    analyzevideo=False,
+)
+```
+
+---
+
+## create\_pretrained\_human\_project
+
+<Warning>
+  This function is **deprecated**. Use `create_pretrained_project` with `model="full_human"` and `engine=deeplabcut.Engine.TF` instead.
+</Warning>
+
+A legacy convenience wrapper that calls `create_pretrained_project` with the `"full_human"` TensorFlow model from the DeepLabCut Model Zoo (ResNet-101 weights pretrained on MPII Human Pose, Insafutdinov et al. 2016).
+
+```python
+deeplabcut.create_pretrained_human_project(
+    project,
+    experimenter,
+    videos,
+    working_directory=None,
+    copy_videos=False,
+    videotype="",
+    createlabeledvideo=True,
+    analyzevideo=True,
+)
+```
+
+<ParamField path="project" type="string" required>
+  Name of the project.
+</ParamField>
+
+<ParamField path="experimenter" type="string" required>
+  Name of the experimenter.
+</ParamField>
+
+<ParamField path="videos" type="list[string]" required>
+  Full paths to the video files to register.
+</ParamField>
+
+<ParamField path="working_directory" type="string" default="None">
+  Directory where the project is created. Defaults to the current working directory.
+</ParamField>
+
+<ParamField path="copy_videos" type="boolean" default="False">
+  Copy videos rather than creating symlinks.
+</ParamField>
+
+<ParamField path="videotype" type="string" default='""'>
+  Extension filter when a directory is passed as a video path.
+</ParamField>
+
+<ParamField path="createlabeledvideo" type="boolean" default="True">
+  Render a labeled output video after analysis.
+</ParamField>
+
+<ParamField path="analyzevideo" type="boolean" default="True">
+  Run video analysis with the downloaded weights.
+</ParamField>
+
+### Example
+
+```python
+import deeplabcut
+
+# Preferred modern equivalent
+deeplabcut.create_pretrained_project(
+    "humanstrokestudy",
+    "Linus",
+    ["/data/videos/homosapiens1.avi"],
+    model="full_human",
+    engine=deeplabcut.Engine.TF,
+)
+```

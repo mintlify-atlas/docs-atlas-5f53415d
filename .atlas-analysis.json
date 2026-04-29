@@ -1,27 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "DeepLabCut",
+  "projectType": "ai-ml",
+  "projectName": "DeepLabCut",
+  "projectDescription": "A Python toolbox for markerless pose estimation of animals and humans using deep learning, supporting single and multi-animal tracking with PyTorch and TensorFlow backends.",
   "theme": "palm",
-  "colors": {
-    "primary": "#3566de",
-    "light": "#0e1011"
-  },
-  "favicon": "https://icons.duckduckgo.com/ip3/deeplabcut.org.ico",
-  "logo": {
-    "light": "https://media.brand.dev/916672e3-9075-4b89-a3f2-25357b118969.png",
-    "dark": "https://media.brand.dev/916672e3-9075-4b89-a3f2-25357b118969.png"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/DeepLabCut/DeepLabCut"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/DeepLabCut/DeepLabCut"
-    }
-  },
+  "primaryColor": "#3566de",
+  "lightColor": "#0e1011",
+  "darkColor": null,
   "navigation": {
     "tabs": [
       {
@@ -102,5 +86,40 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Markerless pose estimation for any animal or object using deep learning",
+    "Single-animal and multi-animal tracking support",
+    "PyTorch and TensorFlow backends (PyTorch recommended)",
+    "SuperAnimal pretrained foundation models via Model Zoo",
+    "Multiple model architectures: ResNet, HRNet, RTMPose, BUCTD, DLCRNet",
+    "GUI (napari-based) and Python API interfaces",
+    "3D pose estimation with stereo camera support",
+    "Active learning and frame extraction for efficient labeling",
+    "Real-time inference via DLClive",
+    "Multi-animal re-identification and tracklet stitching"
+  ],
+  "publicApiSurface": [
+    "deeplabcut.create_new_project()",
+    "deeplabcut.extract_frames()",
+    "deeplabcut.label_frames()",
+    "deeplabcut.create_training_dataset()",
+    "deeplabcut.train_network()",
+    "deeplabcut.evaluate_network()",
+    "deeplabcut.analyze_videos()",
+    "deeplabcut.create_labeled_video()",
+    "deeplabcut.plot_trajectories()",
+    "deeplabcut.extract_outlier_frames()",
+    "deeplabcut.merge_datasets()",
+    "deeplabcut.filterpredictions()",
+    "deeplabcut.analyzeskeleton()",
+    "deeplabcut.video_inference_superanimal()",
+    "deeplabcut.triangulate()",
+    "deeplabcut.calibrate_cameras()",
+    "deeplabcut.create_multianimaltraining_dataset()",
+    "deeplabcut.convert_detections2tracklets()",
+    "deeplabcut.stitch_tracklets()",
+    "deeplabcut.launch_dlc()",
+    "deeplabcut.Engine"
+  ]
 }

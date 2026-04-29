@@ -1,0 +1,70 @@
+---
+title: "DeepLabCut: Markerless Animal Pose Estimation"
+description: "DeepLabCut is the leading open-source toolbox for markerless pose estimation of any animal using deep learning — no markers, no surgery, just video."
+---
+
+DeepLabCut is a Python toolbox for state-of-the-art markerless pose estimation. Track any body part, on any animal (including humans), from standard video footage — no physical markers required. Powered by PyTorch with multiple model architectures, DeepLabCut supports both single-animal and multi-animal projects, offers pretrained SuperAnimal foundation models, and provides both a GUI and a full Python API.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install DeepLabCut with pip or conda on Windows, Linux, or macOS. GPU support included.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Go from raw video to tracked poses in a few Python commands.
+  </Card>
+  <Card title="Single-Animal Guide" icon="paw" href="/guides/single-animal">
+    Full workflow: create project, label frames, train a model, analyze videos.
+  </Card>
+  <Card title="Multi-Animal Guide" icon="users" href="/guides/multi-animal">
+    Track multiple animals simultaneously with identity and tracklet stitching.
+  </Card>
+  <Card title="Model Zoo" icon="brain" href="/modelzoo/overview">
+    Use pretrained SuperAnimal models for zero-shot pose estimation — no labeling needed.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/create-project">
+    Full Python API documentation for every public function.
+  </Card>
+</CardGroup>
+
+## What is DeepLabCut?
+
+DeepLabCut uses transfer learning from state-of-the-art computer vision models to enable pose estimation with surprisingly little training data. Label as few as 50–200 frames, train a model, and achieve sub-pixel accuracy on new videos.
+
+Originally published in [Nature Neuroscience (2018)](https://www.nature.com/articles/s41593-018-0209-y) and extended in [Nature Methods (2022)](https://www.nature.com/articles/s41592-022-01443-0), DeepLabCut has been downloaded over 600,000 times and is used across neuroscience, ecology, sports science, robotics, and more.
+
+## The DeepLabCut workflow
+
+<Steps>
+  <Step title="Create a project">
+    Define your animal/object and set up a project directory with `deeplabcut.create_new_project()`.
+  </Step>
+  <Step title="Extract and label frames">
+    Extract representative frames from your videos and annotate keypoints using the GUI or API.
+  </Step>
+  <Step title="Train a model">
+    Create a training dataset and train a deep learning model on your labeled data.
+  </Step>
+  <Step title="Analyze videos">
+    Run inference on new videos to produce pose estimates, labeled videos, and trajectory data.
+  </Step>
+  <Step title="Refine (optional)">
+    Identify outlier frames, refine labels, and retrain for improved accuracy.
+  </Step>
+</Steps>
+
+## Key capabilities
+
+<CardGroup cols={2}>
+  <Card title="Any animal, any behavior" icon="fish">
+    Works on mice, horses, cheetahs, fish, flies, humans — if you can see it and label it, you can track it.
+  </Card>
+  <Card title="PyTorch backend" icon="fire">
+    DeepLabCut 3.0+ uses PyTorch with architectures including ResNet, HRNet, RTMPose, and BUCTD.
+  </Card>
+  <Card title="SuperAnimal models" icon="star">
+    Pretrained foundation models for quadrupeds and lab mice — no training data required.
+  </Card>
+  <Card title="3D pose estimation" icon="cube">
+    Reconstruct 3D poses from two synchronized cameras using built-in triangulation.
+  </Card>
+</CardGroup>

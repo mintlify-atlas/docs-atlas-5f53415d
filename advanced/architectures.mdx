@@ -1,0 +1,200 @@
+---
+title: "Model architectures in DeepLabCut 3.0"
+description: "An overview of every neural network architecture available in DeepLabCut's PyTorch backend, covering ResNet, HRNet, DEKR, BUCTD, DLCRNet, and RTMPose."
+---
+
+DeepLabCut 3.0 ships a growing library of pose estimation architectures, all accessible through a unified model registry. You can choose a lightweight ResNet for fast iteration, a high-capacity HRNet for maximum accuracy, or a hybrid BUCTD model that combines the best of bottom-up and top-down reasoning. This page describes every available architecture and explains when to reach for each one.
+
+## Listing available models
+
+Before selecting an architecture, you can query the registry at runtime to see every supported model and detector variant:
+
+```python
+from deeplabcut.pose_estimation_pytorch import available_models, available_detectors
+
+print(available_models())     # pose model variants
+print(available_detectors())  # object detector variants (for top-down models)
+```
+
+## Architecture overview
+
+<CardGroup cols={2}>
+  <Card title="ResNet" icon="network-wired">
+    Lightweight, fast backbones. Good baseline for single- and multi-animal projects.
+  </Card>
+  <Card title="HRNet" icon="sitemap">
+    High-resolution representations. Slower but typically more accurate than ResNets.
+  </Card>
+  <Card title="DEKR" icon="arrows-split-up-and-left">
+    Bottom-up disentangled keypoint regression. Powerful for multi-animal scenes.
+  </Card>
+  <Card title="BUCTD" icon="diagram-project">
+    Hybrid bottom-up + conditioned top-down. Top-performing multi-animal method.
+  </Card>
+  <Card title="DLCRNet" icon="layer-group">
+    Multi-scale ResNet backbone with part-affinity fields. The original maDLC model.
+  </Card>
+  <Card title="RTMPose" icon="bolt">
+    Real-time top-down model with a fast CSPNeXt backbone and SimCC-style head.
+  </Card>
+</CardGroup>
+
+## Detailed architecture reference
+
+### ResNet
+
+ResNets are the classic backbone for DeepLabCut projects, adapted from He et al. (CVPR 2016) and Insafutdinov et al. (ECCV 2016). They offer a good speed/accuracy trade-off and train quickly on modest hardware.
+
+| Variant | Mode |
+|---|---|
+| `resnet_50` | Bottom-up |
+| `resnet_101` | Bottom-up |
+| `top_down_resnet_50` | Top-down |
+| `top_down_resnet_101` | Top-down |
+
+### HRNet
+
+HRNet (Wang et al., TPAMI 2020) maintains high-resolution feature maps throughout the network by connecting multi-resolution subnetworks in parallel. This produces more spatially precise heatmaps than ResNets, at the cost of higher compute.
+
+| Variant | Mode |
+|---|---|
+| `hrnet_w18` | Bottom-up |
+| `hrnet_w32` | Bottom-up |
+| `hrnet_w48` | Bottom-up |
+| `top_down_hrnet_w18` | Top-down |
+| `top_down_hrnet_w32` | Top-down |
+| `top_down_hrnet_w48` | Top-down |
+
+<Note>
+  HRNet backbones require image height and width to be multiples of 32. DeepLabCut handles this automatically via `auto_padding` in the `pytorch_config.yaml`. On macOS Apple Silicon, HRNets must be trained on CPU — MPS does not yet support all required operations.
+</Note>
+
+### DEKR
+
+DEKR (Geng et al., CVPR 2021) uses an HRNet backbone with disentangled keypoint regression: it predicts the center of each animal and the offset from that center to each keypoint. This bottom-up design avoids the bounding-box ambiguity of top-down models but is computationally heavy.
+
+| Variant | Size |
+|---|---|
+| `dekr_w18` | Small |
+| `dekr_w32` | Medium |
+| `dekr_w48` | Large |
+
+### BUCTD
+
+BUCTD (Zhou, Stoffl, Mathis, Mathis — ICCV 2023) is a hybrid two-stage architecture. A bottom-up model first localizes animals; its predictions are then passed as pose prompts to a conditioned top-down (CTD) model. This overcomes the detection information bottleneck that affects standard top-down pipelines in crowded scenes.
+
+BUCTD supports two conditioning mechanisms:
+
+- **CoAM variants** — use cross-attention for pose conditioning:
+
+  | Variant |
+  |---|
+  | `ctd_coam_w32` |
+  | `ctd_coam_w48` |
+  | `ctd_coam_w48_human` |
+
+- **PreNet variants** — use a lightweight conditioning network:
+
+  | Variant |
+  |---|
+  | `ctd_prenet_hrnet_w32` |
+  | `ctd_prenet_hrnet_w48` |
+  | `ctd_prenet_rtmpose_s` |
+  | `ctd_prenet_rtmpose_m` |
+  | `ctd_prenet_rtmpose_x` |
+  | `ctd_prenet_rtmpose_x_human` |
+
+### DLCRNet
+
+DLCRNet (Lauer, Zhou et al., Nature Methods 2022) is the original multi-animal DeepLabCut architecture. It uses a multi-scale ResNet backbone and part-affinity fields (PAFs) to assemble detected keypoints into per-individual poses.
+
+| Variant |
+|---|
+| `dlcrnet_stride16_ms5` |
+| `dlcrnet_stride32_ms5` |
+
+### RTMPose
+
+RTMPose (Jiang et al., 2023) is a real-time top-down model built around a CSPNeXt backbone with a SimCC-style regression head. It is significantly faster than HRNet-based top-down models and is the backbone used in many BUCTD PreNet variants.
+
+| Variant | Size |
+|---|---|
+| `rtmpose_s` | Small |
+| `rtmpose_m` | Medium |
+| `rtmpose_x` | Large |
+
+## Bottom-up vs. top-down
+
+Understanding the two paradigms helps you pick the right architecture.
+
+### Bottom-up estimation
+
+Bottom-up models detect all keypoints in the image first, then group them into individuals. Models in this category include ResNet (with PAF head), HRNet (with PAF head), DEKR, and DLCRNet.
+
+**Advantages:**
+- A single forward pass handles any number of animals.
+- No bounding-box ambiguity: overlapping or occluded animals do not confuse the model.
+
+**Disadvantages:**
+- Keypoint grouping (assembling individuals) is a hard problem and can introduce errors, especially in crowded scenes.
+
+### Top-down estimation
+
+Top-down models run an object detector first, then crop each animal's bounding box and estimate pose independently. Models in this category include `top_down_resnet_*`, `top_down_hrnet_*`, and `rtmpose_*`.
+
+**Advantages:**
+- Per-animal crops give the pose model full context for one individual, yielding high accuracy in uncrowded scenes.
+
+**Disadvantages:**
+- Inference time scales with animal count (one crop per animal).
+- When animals overlap, identical bounding boxes make it ambiguous which animal the pose model is predicting.
+
+### BUCTD: the hybrid approach
+
+BUCTD combines both: bottom-up predictions provide precise spatial proposals instead of bounding boxes, feeding a conditioned top-down model that knows which animal it is predicting. This is especially effective for dense, crowded scenes.
+
+## Selecting an architecture
+
+Pass the `net_type` argument to `deeplabcut.create_training_dataset()` to select your architecture:
+
+```python
+import deeplabcut
+
+# Single-animal project with an HRNet W32 backbone
+deeplabcut.create_training_dataset(
+    config_path,
+    net_type="hrnet_w32",
+    augmenter_type="imgaug",
+)
+
+# Multi-animal project with DEKR W32
+deeplabcut.create_training_dataset(
+    config_path,
+    net_type="dekr_w32",
+    augmenter_type="imgaug",
+)
+
+# Top-down multi-animal project with HRNet W32
+deeplabcut.create_training_dataset(
+    config_path,
+    net_type="top_down_hrnet_w32",
+    augmenter_type="imgaug",
+)
+```
+
+<Tip>
+  Any multi-animal architecture can also be used for single-animal projects. If you are unsure which architecture to start with, `hrnet_w32` is a strong general-purpose choice — it is more accurate than `resnet_50` while remaining trainable on a single consumer GPU.
+</Tip>
+
+### Object detectors for top-down models
+
+When using a top-down architecture, you also need an object detector. Available detectors (from fastest to most powerful):
+
+| Detector | Box mAP | Params | GFLOPs |
+|---|---|---|---|
+| `ssdlite` | 21.3 | 3.4 M | 0.58 |
+| `fasterrcnn_mobilenet_v3_large_fpn` | 32.8 | 19.4 M | 4.49 |
+| `fasterrcnn_resnet50_fpn` | 37.0 | 41.8 M | 134.38 |
+| `fasterrcnn_resnet50_fpn_v2` | 46.7 | 43.7 M | 280.37 |
+
+Use the fastest detector that gives sufficient localization accuracy for your use case.

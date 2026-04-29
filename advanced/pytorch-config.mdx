@@ -1,0 +1,399 @@
+---
+title: "Configuring PyTorch training in DeepLabCut"
+description: "A complete reference for pytorch_config.yaml — the file that controls model architecture, optimizer, learning rate, batch size, augmentation, and more."
+---
+
+Every PyTorch model in DeepLabCut 3.0 is configured through a `pytorch_config.yaml` file generated automatically when you call `deeplabcut.create_training_dataset()`. This file controls everything from the neural network architecture to data augmentation, optimizer settings, and how training snapshots are saved. Understanding its structure lets you tune training without touching source code.
+
+## File structure
+
+```yaml
+data:           # data augmentation applied during training and inference
+  ...
+device: auto    # "auto", "cuda", "cpu", or "mps"
+inference:      # inference-specific options (multithreading, compilation, autocast)
+  ...
+metadata:       # project metadata (filled automatically — do not edit)
+  ...
+method: bu      # "bu" (bottom-up) or "td" (top-down)
+model:          # model architecture (backbone, neck, heads)
+  ...
+net_type: resnet_50   # the architecture selected for this shuffle
+runner:         # training runner, optimizer, and learning rate scheduler
+  ...
+train_settings: # batch size, epochs, workers, seed
+  ...
+logger:         # optional: WandbLogger configuration
+resume_training_from:  # optional: path to a snapshot to resume from
+```
+
+## Singleton parameters
+
+| Key | Default | Description |
+|---|---|---|
+| `device` | `auto` | Training device. `auto` selects `cuda` if an NVIDIA GPU is available, otherwise `cpu`. Set to `mps` for Apple Silicon (supported on some models). |
+| `method` | `bu` | `bu` for bottom-up models; `td` for top-down models. |
+| `net_type` | — | The pose model variant (e.g. `resnet_50`, `hrnet_w32`). Set automatically by `create_training_dataset()`. |
+
+## Data augmentation
+
+The `data` section controls which transformations are applied to images during training and inference. The default configuration for a pose model is:
+
+```yaml
+data:
+  bbox_margin: 20
+  colormode: RGB
+  inference:
+    normalize_images: true
+  train:
+    affine:
+      p: 0.5
+      rotation: 30
+      scaling: [0.5, 1.25]
+      translation: 0
+    covering: true
+    crop_sampling:
+      width: 448
+      height: 448
+      max_shift: 0.1
+      method: hybrid
+    gaussian_noise: 12.75
+    motion_blur: true
+    normalize_images: true
+```
+
+### Available augmentations
+
+<AccordionGroup>
+  <Accordion title="Affine transform">
+    Applies random rotation, scaling, and translation. The probability `p` controls how often the transform is applied.
+
+    ```yaml
+    affine:
+      p: 0.9
+      rotation: 30       # max rotation in degrees
+      scaling: [0.5, 1.25]   # min and max scale factor
+      translation: 40    # max translation in pixels
+    ```
+  </Accordion>
+
+  <Accordion title="Crop sampling">
+    Crops a fixed-size region from each image. Required when training with batch size > 1 and images of varying sizes. Four center-sampling methods are available:
+
+    - `uniform` — random crop center anywhere in the image
+    - `keypoints` — center sampled over an annotated keypoint
+    - `density` — center weighted toward dense keypoint regions
+    - `hybrid` — alternates between `uniform` and `density`
+
+    ```yaml
+    crop_sampling:
+      height: 448
+      width: 448
+      max_shift: 0.1
+      method: hybrid
+    ```
+  </Accordion>
+
+  <Accordion title="Auto-padding">
+    Pads images to a minimum size or to a size divisible by a given number. HRNet backbones require height and width to be multiples of 32.
+
+    ```yaml
+    auto_padding:
+      pad_height_divisor: 32
+      pad_width_divisor: 32
+      position: random
+      border_mode: reflect_101
+    ```
+  </Accordion>
+
+  <Accordion title="Collate-based resizing">
+    Resizes all images in a batch to the same size by scaling and cropping. Useful when image sizes vary across the dataset.
+
+    ```yaml
+    collate:
+      type: ResizeFromDataSizeCollate
+      max_shift: 10
+      max_size: 1024
+      min_scale: 0.4
+      max_scale: 1.0
+      min_short_side: 128
+      max_short_side: 1152
+      multiple_of: 32
+      to_square: false
+    ```
+  </Accordion>
+
+  <Accordion title="Covering (cutout)">
+    Randomly cuts rectangular holes out of the image, based on Albumentations CoarseDropout. Applied with 50% probability when set to `true`.
+
+    ```yaml
+    covering: true
+    ```
+  </Accordion>
+
+  <Accordion title="Gaussian noise">
+    Adds Gaussian noise with the specified standard deviation. Pass `true` to use the default value of 12.75.
+
+    ```yaml
+    gaussian_noise: 12.75
+    ```
+  </Accordion>
+
+  <Accordion title="Motion blur">
+    Applies motion blur with 50% probability.
+
+    ```yaml
+    motion_blur: true
+    ```
+  </Accordion>
+
+  <Accordion title="Horizontal flip">
+    Flips images horizontally. For pose models with symmetric keypoints (e.g. left/right limbs), specify symmetry pairs to avoid mislabeling after the flip.
+
+    ```yaml
+    # Safe only when bodyparts have no left/right symmetry:
+    hflip: true
+
+    # With symmetric bodyparts [snout, eye_L, eye_R, ear_L, ear_R]:
+    hflip:
+      p: 0.5
+      symmetries: [[1, 2], [3, 4]]
+    ```
+  </Accordion>
+
+  <Accordion title="Histogram equalization">
+    Applies histogram equalization with 50% probability.
+
+    ```yaml
+    hist_eq: true
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Model architecture
+
+The `model` section configures the backbone, optional neck, and prediction heads. For most use cases you do not need to edit this section — `create_training_dataset()` generates the correct configuration for your chosen `net_type`.
+
+A single-animal HRNet W18 model looks like:
+
+```yaml
+model:
+  backbone:
+    type: HRNet
+    model_name: hrnet_w18
+    pretrained: true
+  backbone_output_channels: 18
+  heads:
+    bodypart:
+      type: HeatmapHead
+      predictor:
+        type: HeatmapPredictor
+      target_generator:
+        type: HeatmapPlateauGenerator
+```
+
+To switch to HRNet W32 with full branch interpolation enabled:
+
+```yaml
+model:
+  backbone:
+    type: HRNet
+    model_name: hrnet_w32
+    pretrained: true
+    interpolate_branches: false
+    increased_channel_count: true
+  backbone_output_channels: 128
+```
+
+## Runner, optimizer, and scheduler
+
+The `runner` section controls the training loop, optimizer, learning rate schedule, and snapshot management.
+
+```yaml
+runner:
+  type: PoseTrainingRunner
+  key_metric: "test.mAP"
+  key_metric_asc: true
+  eval_interval: 1
+  optimizer:
+    ...
+  scheduler:
+    ...
+  snapshots:
+    max_snapshots: 5
+    save_epochs: 25
+    save_optimizer_state: false
+  gpus:
+    - 0
+```
+
+The `key_metric` determines which snapshot is saved as `...-best.pt`. Use `test.mAP` (ascending) for overall accuracy or `test.rmse` (descending) to optimize for precision.
+
+### Optimizer
+
+Any `torch.optim.Optimizer` is supported. Set the `type` to the class name and provide parameters under `params`:
+
+<CodeGroup>
+
+```yaml SGD
+optimizer:
+  type: SGD
+  params:
+    lr: 1e-3
+    momentum: 0.9
+```
+
+```yaml AdamW
+optimizer:
+  type: AdamW
+  params:
+    lr: 1e-4
+```
+
+</CodeGroup>
+
+### Learning rate scheduler
+
+Any scheduler from `torch.optim.lr_scheduler` is supported. The default `LRListScheduler` changes the learning rate at explicit milestones:
+
+```yaml
+scheduler:
+  type: LRListScheduler
+  params:
+    lr_list: [[1e-5], [1e-6]]
+    milestones: [160, 190]
+```
+
+For warmup followed by step decay, use `SequentialLR`:
+
+```yaml
+scheduler:
+  type: SequentialLR
+  params:
+    schedulers:
+      - type: ConstantLR
+        params:
+          factor: 0.01
+          total_iters: 2
+      - type: StepLR
+        params:
+          step_size: 2
+          gamma: 0.1
+    milestones:
+      - 5
+```
+
+## Training settings
+
+```yaml
+train_settings:
+  batch_size: 1
+  dataloader_workers: 0
+  dataloader_pin_memory: true
+  display_iters: 500
+  epochs: 200
+  seed: 42
+```
+
+| Key | Default | Notes |
+|---|---|---|
+| `batch_size` | `1` | Increase to speed up training on large datasets. Requires all images in a batch to be the same size — use `crop_sampling` or `collate`. |
+| `dataloader_workers` | `0` | `0` = single-process loading. Set to 1 or more for multi-process loading. |
+| `dataloader_pin_memory` | `true` | Keep `true` when training on an NVIDIA GPU. |
+| `epochs` | `200` | Total training epochs. One epoch = one full pass through the training set. |
+| `seed` | `42` | Random seed for reproducibility. |
+
+## Inference options
+
+The `inference` block configures behavior during video analysis and evaluation. It does not affect model weights.
+
+```yaml
+inference:
+  multithreading:
+    enabled: true
+    queue_length: 4
+    timeout: 30.0
+  compile:
+    enabled: false
+    backend: "inductor"
+  autocast:
+    enabled: false
+  conditions:            # CTD models only
+    config_path: /path/to/model-dir/pytorch_config.yaml
+    snapshot_path: /path/to/model-dir/snapshot-best-150.pth
+```
+
+<Warning>
+  `torch.compile` can speed up inference but is known to fail in some environments and is incompatible with `ctd_coam_*` models. Leave `compile.enabled: false` unless you have confirmed it works in your setup.
+</Warning>
+
+## Logging with Weights & Biases
+
+Add a `WandbLogger` to log training metrics, images, and hyperparameters to [Weights & Biases](https://wandb.ai). Log in first with `wandb login` from your shell.
+
+```yaml
+logger:
+  type: WandbLogger
+  project_name: my-dlc3-project
+  run_name: hrnet-w32-shuffle0
+  tags: ["hrnet", "split=0"]
+```
+
+Run info is saved to `wandb_info.yaml` in the model directory so you can recover the run later.
+
+## Resuming training from a checkpoint
+
+To resume an interrupted training run, set `resume_training_from` to the full path of the snapshot file:
+
+```yaml
+resume_training_from: /path/to/dlc-models-pytorch/iteration-0/dlcJun22-trainset95shuffle0/train/snapshot-010.pt
+```
+
+If you also modify the learning rate scheduler when resuming, you must set `load_scheduler_state_dict: false` in the `runner` section, otherwise the old scheduler state will overwrite your changes:
+
+```yaml
+runner:
+  load_scheduler_state_dict: false
+  scheduler:
+    type: LRListScheduler
+    params:
+      lr_list: [[1e-6]]
+      milestones: [50]
+```
+
+## Detector configuration for top-down models
+
+Top-down models have a separate `detector` key at the top level of `pytorch_config.yaml`. The detector follows the same structure as the pose model (`data`, `model`, `runner`, `train_settings`):
+
+```yaml
+detector:
+  data:
+    colormode: RGB
+    inference:
+      normalize_images: true
+    train:
+      affine:
+        p: 0.9
+        rotation: 30
+        scaling: [0.5, 1.25]
+        translation: 40
+      hflip: true
+      normalize_images: true
+  model:
+    type: FasterRCNN
+    variant: fasterrcnn_mobilenet_v3_large_fpn
+    pretrained: true
+  runner:
+    type: DetectorTrainingRunner
+    ...
+  train_settings:
+    ...
+```
+
+Bounding boxes for detector training are generated automatically from pose annotations. The default margin is 20 pixels; adjust `bbox_margin` if your images are very small or large:
+
+```yaml
+detector:
+  data:
+    bbox_margin: 20
+```

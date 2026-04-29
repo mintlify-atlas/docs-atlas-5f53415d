@@ -1,0 +1,110 @@
+---
+title: "Performance benchmarks for DeepLabCut models"
+description: "mAP scores and accuracy comparisons for DeepLabCut 3.0 model architectures on SuperAnimal-Quadruped and SuperAnimal-TopViewMouse benchmark datasets."
+---
+
+DeepLabCut 3.0 ships with a range of top-down model architectures — ResNet, HRNet, and RTMPose variants — whose out-of-distribution performance is measured using mean Average Precision (mAP). The tables below report mAP scores on two held-out test sets: AP-10K (used to evaluate `SuperAnimal-Quadruped`) and DLC-OpenField (used to evaluate `SuperAnimal-TopViewMouse`). All numbers are from the [Ye et al. 2024 SuperAnimal paper](https://www.nature.com/articles/s41467-024-48792-2).
+
+## Top-down model performance (DLC 3.0)
+
+The following results use SuperAnimal pretrained weights. AP-10K was held out during `SuperAnimal-Quadruped` training; DLC-OpenField was held out during `SuperAnimal-TopViewMouse` training. This ensures the scores reflect genuine out-of-distribution generalisation, not memorisation.
+
+| Model | Type | mAP — SA-Quadruped (AP-10K) | mAP — SA-TopViewMouse (DLC-OpenField) |
+|---|---|---|---|
+| `top_down_resnet_50` | Top-Down | 54.9 | 93.5 |
+| `top_down_resnet_101` | Top-Down | 55.9 | 94.1 |
+| `top_down_hrnet_w32` | Top-Down | 52.5 | 92.4 |
+| `top_down_hrnet_w48` | Top-Down | 55.3 | 93.8 |
+| `rtmpose_s` | Top-Down | 52.9 | 92.9 |
+| `rtmpose_m` | Top-Down | 55.4 | 94.8 |
+| `rtmpose_x` | Top-Down | 57.6 | 94.5 |
+
+<Note>
+  Model weights for the SuperAnimal-Quadruped models (without AP-10K) are available on [Hugging Face](https://huggingface.co/mwmathis/DeepLabCutModelZoo-SuperAnimal-Quadruped). The `full` models that include AP-10K are released through the DeepLabCut API and GUI.
+</Note>
+
+For guidance on which architecture to choose, see the [architectures guide](/advanced/architectures). In general, `rtmpose_x` achieves the highest mAP on quadruped out-of-distribution data, while `rtmpose_m` and `top_down_resnet_101` lead on the top-view mouse benchmark.
+
+## Official benchmark leaderboard
+
+The DeepLabCut benchmark leaderboard tracks community submissions across multiple standardised datasets. Visit [benchmark.deeplabcut.org](https://benchmark.deeplabcut.org/) to see the current rankings and [available datasets](https://benchmark.deeplabcut.org/datasets.html).
+
+## Running benchmarks on your own models
+
+### High-level API
+
+The `deeplabcut.benchmark` package exposes the core functions needed to evaluate a model against a standardised benchmark definition and compute metrics.
+
+```python
+import deeplabcut.benchmark as dlc_benchmark
+
+# List available benchmark definitions
+print(dlc_benchmark.benchmarks)
+```
+
+### Comparing a TensorFlow model against a PyTorch model
+
+DeepLabCut 3.0 introduced PyTorch as the primary backend. To make a fair comparison between an older TensorFlow model and a new PyTorch model, both must be trained and evaluated on the **same train/test split**. The `create_training_dataset_from_existing_split()` function handles this.
+
+<Steps>
+  <Step title="Create a matched training dataset">
+    Create a new shuffle from an existing one so both models share identical training and test images.
+
+    ```python
+    import deeplabcut
+    from deeplabcut.core.engine import Engine
+
+    config = "path/to/project/config.yaml"
+
+    # Create PyTorch shuffle 4 with the same split as TensorFlow shuffle 3
+    deeplabcut.create_training_dataset_from_existing_split(
+        config=config,
+        from_shuffle=3,
+        from_trainsetindex=0,
+        shuffles=[4],
+        net_type="resnet_50",
+    )
+    ```
+  </Step>
+  <Step title="Train the new model">
+    Train the PyTorch model on the matched dataset.
+
+    ```python
+    deeplabcut.train_network(config, shuffle=4, engine=Engine.PYTORCH, batch_size=8)
+    ```
+  </Step>
+  <Step title="Evaluate and compare">
+    Evaluate the new model across all snapshots.
+
+    ```python
+    deeplabcut.evaluate_network(config, Shuffles=[4], snapshotindex="all")
+    ```
+
+    You can now compare evaluation metrics between the TensorFlow shuffle (3) and the PyTorch shuffle (4) with confidence, because the test set is identical.
+  </Step>
+</Steps>
+
+### Naming convention for benchmark shuffles
+
+When running multiple cross-framework comparisons, use a consistent naming scheme so it is immediately clear which shuffles correspond to each other. A practical pattern:
+
+| TensorFlow shuffle | Matched PyTorch shuffle |
+|---|---|
+| 0 | 1000 |
+| 1 | 1001 |
+| 2 | 1002 |
+
+This makes it unambiguous that shuffle `1001` is the PyTorch counterpart of TensorFlow shuffle `1`.
+
+### Using the GUI
+
+1. Load your project via **Front page → Load project → Open project folder → choose `config.yaml`**.
+2. Select the **Create training dataset** tab.
+3. Tick **Use an existing data split**.
+4. Click **View existing shuffles** to inspect available split indices.
+5. Enter the source shuffle index in the **From shuffle** field and choose an unused index for the new shuffle.
+6. Click **Create training dataset**, then proceed to **Train network** using the new shuffle index.
+
+## Submitting to the leaderboard
+
+A valid benchmark submission must include results for at least one of the [official benchmark datasets](https://benchmark.deeplabcut.org/datasets.html). Refer to the [baseline implementations](https://github.com/DeepLabCut/benchmark/tree/main/benchmark/baselines) in the DeepLabCut benchmark repository for a complete example.
